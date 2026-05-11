@@ -1,154 +1,290 @@
 import streamlit as st
-import pandas as pd
 import database
+import pandas as pd
 import miner
-import os
-# Ajusta esta ruta a donde se instaló Graphviz en tu PC
-os.environ["PATH"] += os.pathsep + 'C:/Program Files/Graphviz/bin'
 
-import pm4py
-# ... el resto de tu código de minería de procesos
-st.set_page_config(page_title="Minería de Procesos - Valer's", layout="wide")
-st.title("🏭 Fabrindustrias Valer's - Análisis de Inventario")
-st.markdown("Sistema de Minería de Procesos con trazabilidad histórica en PostgreSQL.")
-st.divider()
+st.set_page_config(page_title="Minería de Procesos - Valer's", layout="wide", initial_sidebar_state="expanded")
+
+database.inicializar_tablas_sistema()
+
+if "logeado" not in st.session_state:
+    st.session_state.logeado = False
+    st.session_state.rol = None
+    st.session_state.usuario_actual = None
 
 # ==========================================
-# PANEL LATERAL: MODO DE OPERACIÓN
+# PANTALLA DE LOGIN
 # ==========================================
-st.sidebar.header("⚙️ Modo de Operación")
-modo = st.sidebar.radio(
-    "¿Qué deseas hacer?", 
-    ["🆕 Nuevo Análisis (Subir CSV/Excel)", "📜 Ver Historial de Análisis"]
-)
+if not st.session_state.logeado:
+    st.title("🔐 Acceso al Sistema Valer's")
+    st.markdown("Por favor, ingresa tus credenciales para acceder al análisis de procesos.")
+    
+    with st.form("Formulario de Login"):
+        u = st.text_input("Usuario")
+        p = st.text_input("Contraseña", type="password")
+        btn = st.form_submit_button("Entrar")
+        
+        if btn:
+            database.crear_usuario("admin", "valers2024", "admin")
+            
+            exito, rol = database.verificar_login(u, p)
+            if exito:
+                st.session_state.logeado = True
+                st.session_state.rol = rol
+                st.session_state.usuario_actual = u
+                st.rerun()
+            else:
+                st.error("❌ Usuario o contraseña incorrectos")
+    st.stop()
+
+# ==========================================
+# BARRA LATERAL (SIDEBAR) UNIFICADA Y LIMPIA
+# ==========================================
+st.sidebar.write(f"👤 Usuario: **{st.session_state.usuario_actual}** | Rol: **{st.session_state.rol.capitalize()}**")
+if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
+    st.session_state.logeado = False
+    st.rerun()
 
 st.sidebar.divider()
+st.sidebar.header("🧭 Menú Principal")
 
-# Variables de estado
+if st.session_state.rol == "admin":
+    menu = ["📊 Nuevo Análisis", "📜 Historial de Análisis", "⚙️ Panel de Administrador"]
+else:
+    menu = ["📜 Historial de Análisis"]
+
+opcion = st.sidebar.radio("Navegación", menu, label_visibility="collapsed")
+st.sidebar.divider()
+
 df_eventos = None
 analisis_cargado = False
 
-# --- MODO 1: NUEVO ANÁLISIS ---
-if modo == "🆕 Nuevo Análisis (Subir CSV/Excel)":
+# ==========================================
+# VISTAS SEGÚN LA OPCIÓN DEL MENÚ
+# ==========================================
+
+if opcion == "📊 Nuevo Análisis":
+    st.title("📊 Nuevo Análisis de Procesos")
+    st.markdown("Sube tu archivo de eventos (Event Log) para generar un nuevo modelo.")
+    
     st.sidebar.subheader("📁 Carga de Datos")
-    archivo_subido = st.sidebar.file_uploader("Sube tu archivo para analizar y guardar", type=['xlsx', 'csv'])
+    archivo_subido = st.sidebar.file_uploader("Sube tu archivo (CSV o Excel)", type=['xlsx', 'csv'])
     
     if archivo_subido is not None:
-        # 1. Leer archivo
         if archivo_subido.name.endswith('.csv'):
             df_temp = pd.read_csv(archivo_subido)
         else:
             df_temp = pd.read_excel(archivo_subido)
             
-        st.sidebar.info(f"Archivo detectado: {len(df_temp)} filas. Listo para guardar.")
+        st.sidebar.info(f"Archivo detectado: {len(df_temp)} filas.")
         
-        # 2. Botón de Guardar en BD
-        if st.sidebar.button("💾 Guardar en PostgreSQL y Analizar", use_container_width=True):
-            with st.spinner("Inyectando datos en la Base de Datos..."):
+        if st.sidebar.button("💾 Guardar en BD y Analizar", use_container_width=True):
+            with st.spinner("Inyectando datos en PostgreSQL..."):
                 id_ejec, nom_analisis = database.guardar_nuevo_analisis(df_temp, archivo_subido.name)
-                st.sidebar.success(f"¡Guardado con éxito!\nID: {id_ejec}")
-                
-                # 3. Extraemos de la BD para asegurar que estamos leyendo lo guardado
+                st.sidebar.success(f"¡Guardado con éxito!")
                 df_eventos = database.obtener_datos_analisis(id_ejec)
                 analisis_cargado = True
+    else:
+        st.info("👋 Sube tu archivo CSV en el panel lateral para comenzar.")
 
-# --- MODO 2: HISTORIAL ---
-else:
-    st.sidebar.subheader("📜 Análisis Anteriores")
+elif opcion == "📜 Historial de Análisis":
+    st.title("📜 Historial de Análisis")
+    st.markdown("Consulta modelos de procesos generados anteriormente.")
+    
+    st.sidebar.subheader("📥 Cargar Histórico")
     historial = database.obtener_lista_analisis()
     
     if not historial.empty:
-        # Creamos un diccionario para el selector (Muestra el nombre, pero usa el ID)
-        opciones = historial.set_index('ID_Ejecucion')['Nombre_Analisis'].to_dict()
+        opciones_hist = historial.set_index('ID_Ejecucion')['Nombre_Analisis'].to_dict()
+        seleccion_id = st.sidebar.selectbox("Selecciona un análisis:", options=list(opciones_hist.keys()), format_func=lambda x: opciones_hist[x])
         
-        seleccion_id = st.sidebar.selectbox(
-            "Selecciona un análisis histórico:", 
-            options=list(opciones.keys()), 
-            format_func=lambda x: opciones[x]
-        )
-        
-        if st.sidebar.button("📥 Cargar Análisis desde BD", use_container_width=True):
-            with st.spinner("Extrayendo registros históricos..."):
+        if st.sidebar.button("Cargar Análisis", use_container_width=True):
+            with st.spinner("Extrayendo registros..."):
                 df_eventos = database.obtener_datos_analisis(seleccion_id)
                 analisis_cargado = True
-                st.sidebar.success("¡Datos históricos cargados!")
     else:
-        st.sidebar.warning("La base de datos está vacía. Ve a 'Nuevo Análisis' para subir tu primer archivo.")
+        st.warning("La base de datos de historial está vacía.")
 
+elif opcion == "⚙️ Panel de Administrador":
+    st.title("⚙️ Gestión del Sistema")
+    st.markdown("Panel exclusivo para el Administrador.")
+    
+    tab_usuarios, tab_config = st.tabs(["👥 Gestión de Usuarios", "⏳ Configuración de Alertas (SLA)"])
+    
+    with tab_usuarios:
+        col_crear, col_lista = st.columns([1, 1.5])
+        
+        with col_crear:
+            st.subheader("Crear Nuevo Usuario")
+            with st.form("form_nuevo_usuario"):
+                nuevo_u = st.text_input("Nombre de Usuario")
+                nuevo_p = st.text_input("Contraseña temporal", type="password")
+                nuevo_r = st.selectbox("Rol", ["usuario", "admin"])
+                if st.form_submit_button("Registrar"):
+                    if nuevo_u and nuevo_p:
+                        database.crear_usuario(nuevo_u, nuevo_p, nuevo_r)
+                        st.success(f"Usuario '{nuevo_u}' creado.")
+                        st.rerun()
+                    else:
+                        st.error("Rellena todos los campos.")
+                        
+        with col_lista:
+            st.subheader("Usuarios Registrados")
+            df_users = database.obtener_usuarios()
+            
+            encabezado1, encabezado2, encabezado3 = st.columns([2, 2, 1.5])
+            encabezado1.markdown("**👤 Usuario**")
+            encabezado2.markdown("**🔑 Rol**")
+            encabezado3.markdown("**⚙️ Acción**")
+            st.divider()
+            
+            for index, fila in df_users.iterrows():
+                usuario_fila = fila['Usuario']
+                rol_fila = fila['Rol']
+                
+                col1, col2, col3 = st.columns([2, 2, 1.5])
+                
+                col1.write(usuario_fila)
+                col2.write(rol_fila)
+                
+                if usuario_fila != st.session_state.usuario_actual:
+                    if col3.button("🗑️ Eliminar", key=f"btn_eliminar_{usuario_fila}", type="primary", use_container_width=True):
+                        exito, msj = database.eliminar_usuario(usuario_fila)
+                        if exito:
+                            st.success(msj)
+                            st.rerun()
+                        else:
+                            st.error(msj)
+                else:
+                    col3.markdown("🔒 *Tú (Protegido)*")
+                
+                st.markdown("<hr style='margin: 0.5em 0px; border-top: 1px solid #333;'>", unsafe_allow_html=True)
+
+    with tab_config:
+        st.subheader("Meta Global de Operación")
+        st.markdown("Define el tiempo máximo aceptable que debe tardar un caso/lote de principio a fin.")
+        meta_actual = database.obtener_meta_tiempo()
+        nueva_meta = st.number_input("Meta Máxima de Ciclo (Horas):", value=float(meta_actual), step=1.0)
+        if st.button("Guardar Configuración"):
+            database.guardar_meta_tiempo(nueva_meta)
+            st.success(f"Umbral de tiempo actualizado a {nueva_meta} horas.")
 
 # ==========================================
-# DASHBOARD PRINCIPAL (Solo se muestra si hay datos cargados)
+# RENDERIZADO DEL DASHBOARD (Si hay datos cargados)
 # ==========================================
 if analisis_cargado and df_eventos is not None:
+    st.divider()
     
-    # Asegurarnos del formato de fecha (PM4Py lo exige)
-    if 'Timestamp' in df_eventos.columns:
-        df_eventos['Timestamp'] = pd.to_datetime(df_eventos['Timestamp'])
-
-    # Filtros visuales (Quitamos las columnas de sistema para la vista)
     columnas_sistema = ['ID_Ejecucion', 'Nombre_Analisis', 'Fecha_Subida']
     df_vista = df_eventos.drop(columns=[col for col in columnas_sistema if col in df_eventos.columns])
 
-    # KPIs PRINCIPALES
+    df_vista.columns = df_vista.columns.str.lower()
+
+    if 'timestamp' in df_vista.columns: 
+        df_vista['timestamp'] = pd.to_datetime(df_vista['timestamp'])
+    elif 'fecha_hora' in df_vista.columns:
+        df_vista['fecha_hora'] = pd.to_datetime(df_vista['fecha_hora'])
+
     col1, col2, col3 = st.columns(3)
-    col1.metric("📦 Total de Lotes (Casos)", len(df_vista['ID_Caso'].unique()))
+    col1.metric("📦 Total de Lotes Procesados", len(df_vista['id_caso'].unique()))
     col2.metric("🔄 Total de Eventos Registrados", len(df_vista))
-    if 'Costo_Lote_Soles' in df_vista.columns:
-        col3.metric("💰 Costo Aprox. Inventario", f"S/ {df_vista.drop_duplicates(subset=['ID_Caso'])['Costo_Lote_Soles'].sum():,.2f}")
+    
+    if 'costo_lote_soles' in df_vista.columns:
+        col3.metric("💰 Costo Total", f"S/ {df_vista.drop_duplicates(subset=['id_caso'])['costo_lote_soles'].sum():,.2f}")
+    else:
+        col3.metric("💰 Costo Total", "S/ 0.00")
 
     st.divider()
+    
+    # ==========================================
+    # CEREBRO ANALÍTICO: ALERTAS Y CUELLOS DE BOTELLA
+    # ==========================================
+    st.subheader("🧠 Interpretación Automática del Proceso")
+    
+    col_tiempo = 'timestamp' if 'timestamp' in df_vista.columns else 'fecha_hora'
+    
+    if col_tiempo in df_vista.columns and 'id_caso' in df_vista.columns:
 
-    # PESTAÑAS DEL DASHBOARD (TABS)
-    tab1, tab2, tab3 = st.tabs(["🗺️ Mapa de Procesos (PM4Py)", "📊 Análisis Estadístico", "📋 Datos Crudos"])
+        df_vista[col_tiempo] = pd.to_datetime(df_vista[col_tiempo])
+        df_ordenado = df_vista.sort_values(by=['id_caso', col_tiempo])
+        
+        tiempos_ciclo = df_ordenado.groupby('id_caso')[col_tiempo].agg(Inicio='min', Fin='max')
+        tiempos_ciclo['Duracion_Horas'] = (tiempos_ciclo['Fin'] - tiempos_ciclo['Inicio']).dt.total_seconds() / 3600
+        
+        meta_horas = database.obtener_meta_tiempo()
+        
+        lotes_retrasados = tiempos_ciclo[tiempos_ciclo['Duracion_Horas'] > meta_horas]
+        total_lotes = len(tiempos_ciclo)
+        num_retrasados = len(lotes_retrasados)
+        
+        if num_retrasados > 0:
+            porcentaje_critico = round((num_retrasados / total_lotes) * 100, 1)
+            promedio_retraso = round(lotes_retrasados['Duracion_Horas'].mean(), 1)
+            
+            st.error(f"🚨 **ALERTA DE DESEMPEÑO:** Se detectaron **{num_retrasados} lotes** que superaron la meta operativa de {meta_horas} horas.")
+            
+            st.markdown(f"""
+            > **💡 Diagnóstico del Sistema:** El **{porcentaje_critico}%** de los procesos analizados rompen la meta de tiempo establecida. 
+            El tiempo de ciclo promedio de estos lotes críticos es de **{promedio_retraso} horas**. 
+            Te sugerimos observar el **Mapa de Procesos (Grafo)** en la pestaña inferior para identificar qué actividad específica está reteniendo el flujo.
+            """)
+        else:
+            st.success(f"✅ **PROCESO SALUDABLE:** Todos los lotes procesados cumplen con la meta operativa de {meta_horas} horas. No se detectan cuellos de botella críticos a nivel general.")
+    else:
+        st.warning("No se pudo realizar la interpretación automática. Faltan las columnas de fecha o id_caso.")
+        
+    st.divider()
+
+    # TABS DEL DASHBOARD
+    tab1, tab2, tab3 = st.tabs(["🗺️ Mapa de Procesos Real", "📊 Análisis Estadístico", "📋 Datos Crudos"])
 
     with tab1:
         st.write("### Descubrimiento del Flujo Real")
-        st.write("Vista previa de los datos a analizar:")
         st.dataframe(df_vista.head(10), use_container_width=True)
         
-        st.divider()
-        st.write("#### 🧠 Modelo Generado por IA")
-        # ¡ELIMINAMOS EL BOTÓN! Ahora el grafo se genera de forma automática y directa.
-        with st.spinner('Construyendo modelo de IA y detectando cuellos de botella...'):
+        st.write("#### 🧠 Modelo Generado por IA (PM4Py)")
+        with st.spinner('Construyendo grafo...'):
             try:
-                # Le pasamos a miner.py los datos exactos que requiere
                 ruta_imagen_grafo = miner.descubrir_proceso(df_eventos)
                 st.success("¡Grafo generado exitosamente!")
-                st.image(ruta_imagen_grafo, use_column_width=True)
+                st.image(ruta_imagen_grafo, use_column_width=True)  # ← CAMBIO AQUÍ
             except Exception as e:
-                st.error(f"Error en PM4Py al generar el grafo: {e}")
+                st.error(f"Error al generar el grafo: {e}")
+                st.info("Nota: Asegúrate de tener Graphviz instalado en el PATH de Windows.")
 
     with tab2:
         st.write("### Indicadores de Eficiencia Operativa")
+        
         col_graf1, col_graf2 = st.columns(2)
         
         with col_graf1:
             st.write("**Frecuencia de Actividades**")
-            # Método seguro para gráficos de barras
-            df_act = df_vista['Actividad'].value_counts().reset_index()
-            df_act.columns = ['Actividad', 'Cantidad']
-            st.bar_chart(df_act, x='Actividad', y='Cantidad', color="#1f77b4")
+            if 'actividad' in df_vista.columns:
+                df_act = df_vista['actividad'].value_counts().reset_index()
+                df_act.columns = ['Actividad', 'Cantidad']
+                st.bar_chart(df_act, x='Actividad', y='Cantidad', color="#1f77b4")
             
         with col_graf2:
-            if 'Empleado' in df_vista.columns:
+            if 'empleado' in df_vista.columns:
                 st.write("**Carga de Trabajo por Empleado**")
-                df_emp = df_vista['Empleado'].value_counts().reset_index()
+                df_emp = df_vista['empleado'].value_counts().reset_index()
                 df_emp.columns = ['Empleado', 'Cantidad']
                 st.bar_chart(df_emp, x='Empleado', y='Cantidad', color="#ff7f0e")
 
         st.divider()
-        st.write("**Volumen de Eventos en el Tiempo (Histograma de Carga)**")
-        # Método a prueba de balas para el gráfico de líneas (Histograma temporal)
-        df_fechas = df_vista.copy()
-        # Extraemos solo la fecha (sin la hora) para agrupar correctamente
-        df_fechas['Fecha_Corta'] = df_fechas['Timestamp'].dt.date 
-        df_tiempo = df_fechas.groupby('Fecha_Corta').size().reset_index(name='Cantidad de Eventos')
+
+        st.write("**📈 Volumen de Eventos en el Tiempo**")
+        col_tiempo = 'timestamp' if 'timestamp' in df_vista.columns else 'fecha_hora'
         
-        st.line_chart(df_tiempo, x='Fecha_Corta', y='Cantidad de Eventos', color="#2ca02c")
+        if col_tiempo in df_vista.columns:
+            df_fechas = df_vista.copy()
+            df_fechas[col_tiempo] = pd.to_datetime(df_fechas[col_tiempo])
+            df_fechas['Solo_Fecha'] = df_fechas[col_tiempo].dt.date
+            df_tiempos = df_fechas.groupby('Solo_Fecha').size().reset_index(name='Eventos')
+            st.line_chart(df_tiempos, x='Solo_Fecha', y='Eventos', color="#2ca02c")
+        else:
+            st.warning("No se encontró una columna de tiempo para generar el histograma.")
 
     with tab3:
-        st.write("### Base de Datos Extraída de PostgreSQL")
-        st.dataframe(df_eventos, use_container_width=True)
-
-elif not analisis_cargado and modo == "🆕 Nuevo Análisis (Subir CSV/Excel)":
-    st.info("👋 Sube tu archivo CSV en el panel lateral y presiona 'Guardar en BD y Analizar'.")
+        st.write("### Base de Datos Completa")
+        st.dataframe(df_vista, use_container_width=True)
