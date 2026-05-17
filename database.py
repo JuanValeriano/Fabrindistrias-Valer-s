@@ -3,8 +3,22 @@ from datetime import datetime
 from sqlalchemy import create_engine, text
 import urllib.parse
 import bcrypt
+import os
 
-DATABASE_URL = "postgresql://postgres:juanvaleriano@localhost:5432/Valers"
+if os.path.exists(".env"):
+    with open(".env", "r", encoding="utf-8") as f:
+        for line in f:
+            if "=" in line and not line.strip().startswith("#"):
+                clave, valor = line.split("=", 1)
+                os.environ[clave.strip()] = valor.strip().strip('"').strip("'")
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+# DATABASE_URL = "postgresql://postgres:963852741.@localhost:5432/VALERS"
+
+if not DATABASE_URL:
+    DATABASE_URL = "postgresql://postgres:963852741.@localhost:5432/VALERS"
+
 engine = create_engine(DATABASE_URL, echo=False)
 
 # ==========================================
@@ -12,7 +26,6 @@ engine = create_engine(DATABASE_URL, echo=False)
 # ==========================================
 
 def inicializar_tablas_sistema():
-
     with engine.connect() as conn:
 
         conn.execute(text("""
@@ -58,11 +71,9 @@ def obtener_usuarios():
 
     with engine.connect() as conn:
         result = conn.execute(text("SELECT usuario, rol FROM usuarios"))
-
         return pd.DataFrame(result.fetchall(), columns=["Usuario", "Rol"])
 
 def eliminar_usuario(nombre_usuario):
-
     with engine.connect() as conn:
         conn.execute(text("DELETE FROM usuarios WHERE usuario = :u"), {"u": nombre_usuario})
         conn.commit()
@@ -116,3 +127,26 @@ def obtener_datos_analisis(id_ejecucion):
     return pd.read_sql(query, engine)
 
 
+def cambiar_contrasena(usuario, pass_actual, pass_nueva):
+
+    with engine.connect() as conn:
+
+        result = conn.execute(text("SELECT password_hash FROM usuarios WHERE usuario = :u"), {"u": usuario}).fetchone()
+        
+        if not result:
+            return False, "Usuario no encontrado."
+        
+        hash_bd = result[0]
+        
+        if isinstance(hash_bd, str):
+            hash_bd = hash_bd.encode('utf-8')
+            
+        if not bcrypt.checkpw(pass_actual.encode('utf-8'), hash_bd):
+            return False, "La contraseña actual es incorrecta."
+            
+        nuevo_hash = bcrypt.hashpw(pass_nueva.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        
+        conn.execute(text("UPDATE usuarios SET password_hash = :p WHERE usuario = :u"), {"p": nuevo_hash, "u": usuario})
+        conn.commit()
+        
+    return True, "¡Contraseña actualizada exitosamente!"
