@@ -230,29 +230,23 @@ elif opcion == "👤 Mi Perfil":
 if analisis_cargado and df_eventos is not None:
     st.divider()
         
-    df_vista = df_eventos.copy()
-        
-    columnas_sistema = ['ID_Ejecucion', 'Nombre_Analisis', 'Fecha_Subida']
-    df_vista = df_vista.drop(columns=[col for col in columnas_sistema if col in df_vista.columns])
-
-    df_vista.columns = df_vista.columns.str.lower()
-        
-    col_tiempo = 'timestamp' if 'timestamp' in df_vista.columns else 'fecha_hora'
-    if col_tiempo in df_vista.columns: 
-        df_vista[col_tiempo] = pd.to_datetime(df_vista[col_tiempo])
-        fecha_min = df_vista[col_tiempo].min().date()
-        fecha_max = df_vista[col_tiempo].max().date()
-    else:
-        import datetime
-        fecha_min = datetime.date(2000, 1, 1)
-        fecha_max = datetime.date.today()
-
-    lista_empleados = df_vista['empleado'].dropna().unique().tolist() if 'empleado' in df_vista.columns else []
-
+    df_temp_cols = df_eventos.copy()
+    df_temp_cols.columns = df_temp_cols.columns.str.lower()
+    lista_empleados = df_temp_cols['empleado'].dropna().unique().tolist() if 'empleado' in df_temp_cols.columns else []
+    
+    variant_counts, case_to_variant = miner.obtener_variantes(df_eventos)
+    lista_variantes = variant_counts['Variante_ID'].tolist()
+    
+    col_tiempo_orig = 'Timestamp' if 'Timestamp' in df_eventos.columns else 'fecha_hora'
+    df_eventos[col_tiempo_orig] = pd.to_datetime(df_eventos[col_tiempo_orig])
+    fecha_min = df_eventos[col_tiempo_orig].min().date()
+    fecha_max = df_eventos[col_tiempo_orig].max().date()
+    
     if 'filtros_aplicados' not in st.session_state:
         st.session_state.f_inicio_val = fecha_min
         st.session_state.f_fin_val = fecha_max
         st.session_state.emps_val = lista_empleados
+        st.session_state.var_val = "Todas"
         st.session_state.filtros_aplicados = True
 
     st.sidebar.markdown("---")
@@ -261,17 +255,30 @@ if analisis_cargado and df_eventos is not None:
     st.sidebar.markdown("**📅 Rango de Fechas**")
     col1, col2, col3, col4 = st.sidebar.columns([1, 4, 1, 4])
     with col1: st.markdown("<p style='margin-top:8px; font-size:14px;'>de</p>", unsafe_allow_html=True)
-    with col2: f_inicio = st.date_input("inicio", value=fecha_min, min_value=fecha_min, max_value=fecha_max, label_visibility="collapsed")
+    with col2: f_inicio = st.date_input("inicio", value=st.session_state.f_inicio_val, min_value=fecha_min, max_value=fecha_max, label_visibility="collapsed")
     with col3: st.markdown("<p style='margin-top:8px; font-size:14px; text-align:center;'>a</p>", unsafe_allow_html=True)
-    with col4: f_fin = st.date_input("fin", value=fecha_max, min_value=fecha_min, max_value=fecha_max, label_visibility="collapsed")
+    with col4: f_fin = st.date_input("fin", value=st.session_state.f_fin_val, min_value=fecha_min, max_value=fecha_max, label_visibility="collapsed")
+        
+    st.sidebar.divider()
+    
+    st.sidebar.markdown("**🔄 Variantes de Proceso**")
+    idx_var = 0
+    if st.session_state.var_val in lista_variantes:
+        idx_var = lista_variantes.index(st.session_state.var_val) + 1
+    var_seleccionada_ui = st.sidebar.selectbox(
+        "Variante:", 
+        options=["Todas"] + lista_variantes, 
+        index=idx_var,
+        label_visibility="collapsed"
+    )
         
     st.sidebar.divider()
         
-    st.sidebar.markdown("**👤 Tamaño de la pantalla / Empleado**")
+    st.sidebar.markdown("**👤 Filtrar por Empleado**")
     buscador = st.sidebar.text_input("Buscar...", placeholder="Buscar...", label_visibility="collapsed")
         
     emps_seleccionados_ui = []
-    with st.sidebar.container(height=250):
+    with st.sidebar.container(height=200):
         for emp in lista_empleados:
             if buscador.lower() in str(emp).lower():
                 is_checked = emp in st.session_state.emps_val
@@ -281,32 +288,35 @@ if analisis_cargado and df_eventos is not None:
     st.sidebar.divider()
         
     if st.sidebar.button("Aplicar Filtros 🚀", type="primary", use_container_width=True):
-
         st.session_state.f_inicio_val = f_inicio
         st.session_state.f_fin_val = f_fin
         st.session_state.emps_val = emps_seleccionados_ui
+        st.session_state.var_val = var_seleccionada_ui
+        st.rerun()
 
-
-    mask_fechas = (df_vista[col_tiempo].dt.date >= st.session_state.f_inicio_val) & (df_vista[col_tiempo].dt.date <= st.session_state.f_fin_val)
-    df_vista = df_vista.loc[mask_fechas]
+    df_filtrado_completo = df_eventos.copy()
+    
+    df_filtrado_completo['Variante_ID'] = df_filtrado_completo['ID_Caso'].map(case_to_variant)
+    
+    if st.session_state.var_val != "Todas":
+        df_filtrado_completo = df_filtrado_completo[df_filtrado_completo['Variante_ID'] == st.session_state.var_val]
         
-    if 'empleado' in df_vista.columns:
-        df_vista = df_vista[df_vista['empleado'].isin(st.session_state.emps_val)]
+    df_filtrado_completo[col_tiempo_orig] = pd.to_datetime(df_filtrado_completo[col_tiempo_orig])
+    mask_ev = (df_filtrado_completo[col_tiempo_orig].dt.date >= st.session_state.f_inicio_val) & (df_filtrado_completo[col_tiempo_orig].dt.date <= st.session_state.f_fin_val)
+    df_filtrado_completo = df_filtrado_completo.loc[mask_ev]
+    
+    col_emp_orig = 'Empleado' if 'Empleado' in df_filtrado_completo.columns else 'empleado'
+    if col_emp_orig in df_filtrado_completo.columns:
+        df_filtrado_completo = df_filtrado_completo[df_filtrado_completo[col_emp_orig].isin(st.session_state.emps_val)]
 
-    df_eventos_filtrado = df_eventos.copy()
-    col_tiempo_orig = 'Timestamp' if 'Timestamp' in df_eventos_filtrado.columns else 'fecha_hora'
-    if col_tiempo_orig in df_eventos_filtrado.columns:
-        df_eventos_filtrado[col_tiempo_orig] = pd.to_datetime(df_eventos_filtrado[col_tiempo_orig])
-        mask_ev = (df_eventos_filtrado[col_tiempo_orig].dt.date >= st.session_state.f_inicio_val) & (df_eventos_filtrado[col_tiempo_orig].dt.date <= st.session_state.f_fin_val)
-        df_eventos_filtrado = df_eventos_filtrado.loc[mask_ev]
-            
-    col_emp_orig = 'Empleado' if 'Empleado' in df_eventos_filtrado.columns else 'empleado'
-    if col_emp_orig in df_eventos_filtrado.columns:
-        df_eventos_filtrado = df_eventos_filtrado[df_eventos_filtrado[col_emp_orig].isin(st.session_state.emps_val)]
-
-    if df_vista.empty:
-        st.warning("⚠️ No hay datos para mostrar con los filtros aplicados. Intenta cambiar las fechas o marcar más personas.")
+    if df_filtrado_completo.empty:
+        st.warning("⚠️ No hay datos para mostrar con los filtros aplicados. Intenta cambiar las fechas, la variante o marcar más personas.")
         st.stop()
+
+    df_vista = df_filtrado_completo.copy()
+    columnas_sistema = ['ID_Ejecucion', 'Nombre_Analisis', 'Fecha_Subida', 'Variante_ID']
+    df_vista = df_vista.drop(columns=[col for col in columnas_sistema if col in df_vista.columns])
+    df_vista.columns = df_vista.columns.str.lower()
 
     col1, col2, col3 = st.columns(3)
     if 'id_caso' in df_vista.columns:
@@ -331,7 +341,6 @@ if analisis_cargado and df_eventos is not None:
     col_tiempo = 'timestamp' if 'timestamp' in df_vista.columns else 'fecha_hora'
     
     if col_tiempo in df_vista.columns and 'id_caso' in df_vista.columns:
-
         df_vista[col_tiempo] = pd.to_datetime(df_vista[col_tiempo])
         df_ordenado = df_vista.sort_values(by=['id_caso', col_tiempo])
         
@@ -361,10 +370,10 @@ if analisis_cargado and df_eventos is not None:
             st.success(f"✅ **PROCESO SALUDABLE:** Todos los lotes procesados cumplen con la meta operativa de {meta_horas} horas. No se detectan cuellos de botella críticos a nivel general.")
 
         st.divider()
-        st.subheader("🤖 Análisis Avanzado con Inteligencia Artificial (Gemini)")
-        st.markdown("Obtén un resumen ejecutivo y recomendaciones basadas en los KPIs descubiertos.")
+        st.subheader("🤖 Análisis Sencillo con Inteligencia Artificial (Gemini)")
+        st.markdown("Obtén una explicación clara sobre por qué ocurren las demoras y cómo solucionarlas de forma simple.")
         
-        if st.button("Generar Insights con Gemini 🧠", type="secondary"):
+        if st.button("Explicar Resultados con Gemini 🧠", type="secondary"):
             api_key_env = os.environ.get("GEMINI_API_KEY")
             if not api_key_env:
                 st.error("❌ Error: La API Key de Gemini no está configurada en las variables de entorno o en el archivo `.env`.")
@@ -393,25 +402,24 @@ if analisis_cargado and df_eventos is not None:
                             contexto_negocio += f"- Distribución de estados de calidad en QA: {qa_str}\n"
 
                         prompt = f"""
-                        Eres un experto consultor estratégico en Minería de Procesos (Process Mining) y mejora continua (Lean/Six Sigma, Kaizen). 
-                        A continuación te presento los KPIs operativos reales y el contexto transaccional del proceso de inventario y distribución de mi empresa:
+                        Actúa como un asesor de negocios cercano, amigable y muy claro, explicando la salud del proceso de inventario y distribución de la empresa de una manera simple y comprensible para alguien que no conoce términos técnicos. Evita usar palabras complejas como 'SLA', 'Kaizen', 'Six Sigma', 'Minería de Procesos', 'cuellos de botella' o 'variabilidad' sin explicarlas antes de forma muy sencilla.
                         
-                        **Métricas de Rendimiento y SLAs:**
-                        - Total de Lotes Procesados analizados: {total_lotes}
-                        - Meta Operativa de Ciclo por Lote (SLA máximo tolerado): {meta_horas} horas
-                        - Lotes Retrasados que rompieron el SLA: {num_retrasados}
-                        - Porcentaje de lotes en estado crítico: {porcentaje_critico}%
-                        - Tiempo de ciclo promedio de los lotes retrasados: {promedio_retraso} horas
+                        Aquí tienes la información real de la operación de forma simple:
+                        - Total de lotes o pedidos analizados: {total_lotes}
+                        - Tiempo máximo que debería tomar cada lote (meta del negocio): {meta_horas} horas
+                        - Cantidad de lotes que tardaron más de lo debido (retrasados): {num_retrasados}
+                        - Porcentaje de lotes que se retrasaron: {porcentaje_critico}%
+                        - Tiempo promedio que tardaron los lotes con demoras: {promedio_retraso} horas
                         
-                        **Contexto Transaccional del Proceso:**
-                        {contexto_negocio if contexto_negocio else '- No hay metadatos transaccionales adicionales.'}
+                        **Detalles del proceso observados:**
+                        {contexto_negocio if contexto_negocio else '- No hay detalles adicionales disponibles.'}
                         
-                        En base a estos datos y contexto, por favor elabora un reporte de auditoría operacional:
-                        1. Una **interpretación ejecutiva** clara y profesional de la salud actual del proceso.
-                        2. Tres **hipótesis de negocio concretas** sobre qué podría estar causando la variabilidad o cuellos de botella (ej. relacionando los operarios con mayor carga, el tipo de material, el estado de calidad de los proveedores o retrasos en la actividad de registro o ubicación).
-                        3. **Recomendaciones estratégicas** accionables y priorizadas de mejora continua para acelerar el ciclo.
+                        Por favor, redacta un informe sencillo y amigable respondiendo a lo siguiente:
+                        1. **¿Qué está pasando con los tiempos? (Explicación de los resultados)**: Explica de manera sencilla y clara qué significan estos números sobre el rendimiento actual, de forma que cualquier persona pueda entenderlo.
+                        2. **¿Por qué está pasando esto? (Causas de las demoras)**: Explica detalladamente y en lenguaje común por qué ocurren estos retrasos basándote en las actividades más frecuentes, el equipo/empleados involucrados o el tipo de materiales/proveedores. Conéctalos de forma lógica para explicar el porqué real del problema.
+                        3. **¿Cómo podemos solucionarlo de forma sencilla? (Recomendaciones prácticas)**: Sugiere tres acciones muy sencillas, directas y fáciles de entender que el equipo pueda aplicar para evitar estos retrasos en el día a día.
                         
-                        Escribe el reporte en un tono profesional, analítico y corporativo. Usa listas y negritas para facilitar la lectura. No uses más de 300 palabras.
+                        Recuerda explicar siempre el "porqué" de las cosas de forma directa y sencilla. Usa un tono amigable, instructivo y alentador. Usa negritas y viñetas para que sea muy fácil y rápido de leer. Escribe un máximo de 300 palabras.
                         """
                         response = model.generate_content(prompt)
                         st.info(response.text)
@@ -423,18 +431,36 @@ if analisis_cargado and df_eventos is not None:
         
     st.divider()
 
-    tab1, tab2, tab3 = st.tabs(["🗺️ Mapa de Procesos Real", "📊 Análisis Estadístico", "📋 Datos Crudos"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "🗺️ Mapa de Procesos Real", 
+        "📊 Análisis Estadístico", 
+        "🔄 Análisis de Variantes",
+        "⏱️ Tiempos de Ciclo y SLA",
+        "🤝 Matriz de Traspaso (SNA)",
+        "📋 Datos Crudos"
+    ])
 
     with tab1:
         st.write("### Descubrimiento del Flujo Real")
-        st.dataframe(df_vista.head(10), use_container_width=True)
+        
+        tipo_grafo = st.radio(
+            "Selecciona el tipo de Mapa de Procesos:", 
+            ["Grafo de Frecuencias (Volumen)", "Grafo de Desempeño (Tiempos - Cuellos de Botella)"],
+            horizontal=True
+        )
         
         st.write("#### 🧠 Modelo Generado por IA (PM4Py)")
         with st.spinner('Construyendo grafo...'):
             try:
-                ruta_imagen_grafo = miner.descubrir_proceso(df_eventos_filtrado)
-                st.success("¡Grafo generado exitosamente!")
+                arg_tipo = "desempeño" if "Desempeño" in tipo_grafo else "frecuencia"
+                ruta_imagen_grafo = miner.descubrir_proceso(df_filtrado_completo, tipo_grafo=arg_tipo)
+                st.success(f"¡Grafo de {arg_tipo.capitalize()} generado exitosamente!")
                 st.image(ruta_imagen_grafo, use_container_width=True)
+                
+                if arg_tipo == "desempeño":
+                    st.info("💡 **Cómo leer el Grafo de Desempeño**: Las flechas indican la dirección del flujo. Los números sobre las flechas muestran el **tiempo promedio** transcurrido entre las actividades. Las flechas más gruesas o de colores más intensos representan transiciones lentas; aquí es donde se encuentra el **cuello de botella** de tu proceso.")
+                else:
+                    st.info("💡 **Cómo leer el Grafo de Frecuencias**: Los números muestran el número de veces que se realizó cada transición. Las líneas gruesas indican los caminos más recorridos.")
             except Exception as e:
                 st.error(f"Error al generar el grafo: {e}")
                 st.info("Nota: Asegúrate de tener Graphviz instalado en el PATH de Windows.")
@@ -473,10 +499,10 @@ if analisis_cargado and df_eventos is not None:
             st.warning("No se encontró una columna de tiempo para generar el histograma.")
 
         st.divider()
-        st.subheader("🤖 Interpretación Inteligente de Gráficos (Gemini)")
-        st.markdown("Genera un análisis explicativo detallado de los patrones estadísticos, la carga de trabajo de los operarios y el volumen temporal.")
+        st.subheader("🤖 Interpretación Sencilla de Gráficos (Gemini)")
+        st.markdown("Genera una explicación fácil de entender sobre lo que nos dicen las gráficas, sin tecnicismos ni complicaciones.")
         
-        if st.button("Interpretar Tendencias Estadísticas con Gemini 🧠", key="btn_interpret_stats", type="primary", use_container_width=True):
+        if st.button("Explicar Gráficos con Gemini 🧠", key="btn_interpret_stats", type="primary", use_container_width=True):
             api_key_env = os.environ.get("GEMINI_API_KEY")
             if not api_key_env:
                 st.error("❌ Error: La API Key de Gemini no está configurada en las variables de entorno o en el archivo `.env`.")
@@ -513,24 +539,25 @@ if analisis_cargado and df_eventos is not None:
 - Día con mayor volumen de trabajo: {dia_pico} ({max_eventos} eventos)"""
 
                         prompt = f"""
-                        Eres un analista de datos experto en optimización de operaciones y minería de procesos corporativa.
-                        A continuación te presento los resultados de las métricas estadísticas, volumen temporal y distribución de cargas de trabajo de nuestra operación para que los interpretes con ojo clínico:
+                        Actúa como un asesor amigable y didáctico que ayuda a entender los datos del negocio sin usar tecnicismos. Explica de manera sencilla y clara el "porqué" de lo que se ve en las gráficas estadísticas de la empresa, pensando en un usuario sin conocimientos técnicos.
                         
-                        **1. FRECUENCIA DE ACTIVIDADES (Flujo del Proceso):**
-                        {act_context if act_context else '- Sin datos de actividades.'}
+                        Aquí están los datos analizados:
                         
-                        **2. CARGA DE TRABAJO POR EMPLEADO (Recursos de Personal):**
-                        {emp_context if emp_context else '- Sin datos de empleados.'}
+                        **1. Las tareas que más se repiten en el día a día (Frecuencia de Actividades):**
+                        {act_context if act_context else '- No hay datos de actividades.'}
                         
-                        **3. VOLUMEN DE EVENTOS EN EL TIEMPO (Tendencia Temporal):**
-                        {temp_context if temp_context else '- Sin datos de fechas.'}
+                        **2. La cantidad de tareas que tiene asignada cada persona en el equipo (Carga de Trabajo por Empleado):**
+                        {emp_context if emp_context else '- No hay datos de empleados.'}
                         
-                        Por favor, redacta un informe ejecutivo de interpretación operacional que contenga:
-                        1. **Análisis de Pareto / Cuellos de botella en Actividades:** Explica qué actividades absorben el mayor volumen operativo de la organización y si denotan ineficiencias o flujos estándar.
-                        2. **Diagnóstico de Distribución de Recursos:** Evalúa si la distribución de carga de trabajo entre operarios es sana o si denota monopolización, dependencias críticas de una persona o cuellos de botella por sobrecarga de recursos.
-                        3. **Análisis de Capacidad Temporal y Picos:** Interpreta los promedios y el día pico de trabajo para sugerir ajustes organizativos en períodos de alta demanda.
+                        **3. Cómo varía el volumen de trabajo en el tiempo (Tendencia Temporal):**
+                        {temp_context if temp_context else '- No hay datos de fechas.'}
                         
-                        Mantén un tono profesional, pragmático y de consultoría estratégica. Usa viñetas y negritas para mejorar la legibilidad. No superes las 300 palabras.
+                        Por favor, redacta una explicación sencilla y clara que responda a:
+                        1. **¿Cuáles son las tareas más repetitivas y por qué?:** Explica qué actividades consumen más tiempo en la operación y qué razones sencillas de negocio explican que se repitan tanto en el flujo diario.
+                        2. **¿Cómo está repartido el trabajo y qué problemas puede causar?:** Analiza si hay personas con demasiadas tareas asignadas en comparación con los demás. Explica el porqué esto puede sobrecargar a los empleados y causar demoras o atascos.
+                        3. **¿Qué significan los picos de trabajo?:** Explica de manera simple por qué hay días con mucho más movimiento que otros y cómo se puede organizar mejor el equipo para enfrentar esos momentos sin saturarse.
+                        
+                        Evita tecnicismos como 'Análisis de Pareto', 'capacidad temporal', 'monopolización de recursos', etc. Explica siempre el "porqué" detrás de cada patrón de forma amigable y comprensible. Usa negritas y viñetas para facilitar la lectura. Escribe un máximo de 300 palabras.
                         """
                         response = model.generate_content(prompt)
                         st.info(response.text)
@@ -538,5 +565,100 @@ if analisis_cargado and df_eventos is not None:
                         st.error(f"Error al generar interpretación de gráficos. Detalles: {e}")
 
     with tab3:
-        st.write("### Base de Datos Completa")
+        st.write("### Análisis de Variantes de Proceso")
+        st.markdown("Una **variante** es un camino específico (secuencia ordenada de actividades) que sigue un lote de principio a fin.")
+        
+        vars_filtradas, _ = miner.obtener_variantes(df_filtrado_completo)
+        
+        st.metric("Variantes Únicas Descubiertas", len(vars_filtradas))
+        
+        df_vars_display = vars_filtradas.copy()
+        df_vars_display['Secuencia_Actividades'] = df_vars_display['Actividades'].apply(lambda x: " ➡️ ".join(x))
+        df_vars_display = df_vars_display.drop(columns=['Actividades'])
+        
+        df_vars_display.columns = ["ID Variante", "Casos", "Cobertura (%)", "Secuencia de Actividades"]
+        df_vars_display = df_vars_display[["ID Variante", "Secuencia de Actividades", "Casos", "Cobertura (%)"]]
+        
+        st.dataframe(df_vars_display, use_container_width=True, hide_index=True)
+        
+        st.write("#### 📊 Cobertura por Variante")
+        st.bar_chart(df_vars_display, x='ID Variante', y='Cobertura (%)', color="#9467bd")
+
+    with tab4:
+        st.write("### Análisis de Tiempos de Ciclo (Cycle Time)")
+        st.markdown("El tiempo de ciclo mide la duración total de un caso, desde su primera actividad hasta la última registrada.")
+        
+        case_durations = miner.calcular_tiempos_ciclo(df_filtrado_completo)
+        
+        if not case_durations.empty:
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            avg_dur = case_durations['Duracion_Horas'].mean()
+            med_dur = case_durations['Duracion_Horas'].median()
+            min_dur = case_durations['Duracion_Horas'].min()
+            max_dur = case_durations['Duracion_Horas'].max()
+            
+            col_m1.metric("⏱️ Duración Promedio", f"{avg_dur:.2f} hrs")
+            col_m2.metric("🎯 Duración Mediana", f"{med_dur:.2f} hrs")
+            col_m3.metric("⚡ Duración Mínima", f"{min_dur:.2f} hrs")
+            col_m4.metric("🐢 Duración Máxima", f"{max_dur:.2f} hrs")
+            
+            # SLA cumplimiento detallado
+            meta_sla = database.obtener_meta_tiempo()
+            casos_retrasados = case_durations[case_durations['Duracion_Horas'] > meta_sla]
+            porcentaje_cumplimiento = ((len(case_durations) - len(casos_retrasados)) / len(case_durations)) * 100
+            
+            st.divider()
+            col_sla1, col_sla2 = st.columns(2)
+            
+            with col_sla1:
+                st.write("#### Cumplimiento de SLA Operativo")
+                st.metric(
+                    "Tasa de Cumplimiento (%)", 
+                    f"{porcentaje_cumplimiento:.1f}%", 
+                    delta=f"{porcentaje_cumplimiento - 100:.1f}% (Meta: {meta_sla} hrs)",
+                    delta_color="normal" if porcentaje_cumplimiento == 100 else "inverse"
+                )
+            
+            with col_sla2:
+                st.write("#### Distribución de Duraciones (Frecuencia)")
+                import numpy as np
+                counts, bins = np.histogram(case_durations['Duracion_Horas'], bins=10)
+                df_hist = pd.DataFrame({
+                    'Duración (Horas)': [f"{bins[i]:.1f}-{bins[i+1]:.1f}" for i in range(len(counts))], 
+                    'Cantidad': counts
+                })
+                st.bar_chart(df_hist, x='Duración (Horas)', y='Cantidad', color="#d62728")
+                
+            st.divider()
+            st.write("#### Top 10 Casos más Lentos (Retrasos)")
+            slow_cases = case_durations.sort_values(by='Duracion_Horas', ascending=False).head(10)
+            
+            slow_cases['Exceso_SLA'] = slow_cases['Duracion_Horas'].apply(
+                lambda x: f"{(x - meta_sla):.2f} hrs de retraso" if x > meta_sla else "Cumple SLA"
+            )
+            slow_cases['Duracion_Horas'] = slow_cases['Duracion_Horas'].apply(lambda x: f"{x:.2f} hrs")
+            slow_cases['Inicio'] = slow_cases['Inicio'].dt.strftime('%d/%m/%Y %H:%M')
+            slow_cases['Fin'] = slow_cases['Fin'].dt.strftime('%d/%m/%Y %H:%M')
+            
+            slow_cases.columns = ["ID Caso", "Fecha Inicio", "Fecha Fin", "Duración Total", "SLA Status"]
+            st.dataframe(slow_cases, use_container_width=True, hide_index=True)
+        else:
+            st.warning("No hay suficientes datos temporales para calcular los tiempos de ciclo.")
+
+    with tab5:
+        st.write("### Matriz de Traspaso de Trabajo (Handover of Work)")
+        st.markdown("Esta matriz muestra cómo se transfiere la responsabilidad de los lotes entre los operarios. Las filas representan quién **entrega** el trabajo y las columnas quién lo **recibe**.")
+        
+        try:
+            matriz_traspaso = miner.calcular_matriz_traspaso(df_filtrado_completo)
+            if not matriz_traspaso.empty:
+                st.dataframe(matriz_traspaso.style.background_gradient(cmap='YlOrRd', axis=None), use_container_width=True)
+                st.info("💡 **Cómo interpretar esta matriz**: Los números representan traspasos de tareas entre personas en casos idénticos. Celdas con números altos denotan dependencias directas o cargas concentradas. Celdas vacías indican que no hay interacción directa.")
+            else:
+                st.info("No se registraron traspasos de trabajo entre diferentes operarios en los datos actuales.")
+        except Exception as e:
+            st.error(f"Error al calcular la matriz de traspaso: {e}")
+
+    with tab6:
+        st.write("### Base de Datos Completa (Datos Filtrados)")
         st.dataframe(df_vista, use_container_width=True)

@@ -21,9 +21,6 @@ if not DATABASE_URL:
 
 engine = create_engine(DATABASE_URL, echo=False)
 
-# ==========================================
-# GESTIÓN DE SEGURIDAD Y USUARIOS
-# ==========================================
 
 def inicializar_tablas_sistema():
     with engine.connect() as conn:
@@ -79,9 +76,6 @@ def eliminar_usuario(nombre_usuario):
         conn.commit()
     return True, f"Usuario '{nombre_usuario}' eliminado exitosamente."
 
-# ==========================================
-# GESTIÓN DE METAS (SLA)
-# ==========================================
 
 def guardar_meta_tiempo(horas):
     with engine.connect() as conn:
