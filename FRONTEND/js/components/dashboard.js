@@ -217,7 +217,7 @@ export function renderDashboard(container, data, id_ejecucion, currentFilters, s
 
     renderTabs();
 
-    renderTabProcessMap(document.getElementById('tab-process-map'), id_ejecucion, currentFilters, showToast);
+    renderTabProcessMap(document.getElementById('tab-process-map'), id_ejecucion, currentFilters, showToast, data);
     renderTabStats(document.getElementById('tab-stats'), data, showToast);
     renderTabVariants(document.getElementById('tab-variants'), data);
     renderTabSLA(document.getElementById('tab-sla'), data);

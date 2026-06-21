@@ -1,6 +1,15 @@
 import { api } from '../api.js';
 
-export function renderTabProcessMap(container, id_ejecucion, currentFilters, showToast) {
+export function renderTabProcessMap(container, id_ejecucion, currentFilters, showToast, data) {
+    const interpretationHtml = (data && data.interpretaciones && data.interpretaciones.mapa_procesos) ? `
+        <div class="business-interpretation" style="margin-top: 1.5rem; padding: 1.25rem; background-color: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-left: 4px solid var(--primary); border-radius: 8px;">
+            <h4 style="margin-top: 0; color: var(--primary-hover); display: flex; align-items: center; gap: 0.5rem; font-size: 1rem; font-weight: 600; margin-bottom: 0.5rem;">
+                💡 Interpretación del Mapa de Procesos
+            </h4>
+            <p style="margin-bottom: 0; font-size: 0.95rem; line-height: 1.6; color: var(--text-main);">${data.interpretaciones.mapa_procesos}</p>
+        </div>
+    ` : '';
+
     container.innerHTML = `
         <div class="card" style="margin-top: 1rem;">
             <h3>🗺️ Descubrimiento del Flujo Real</h3>
@@ -30,6 +39,8 @@ export function renderTabProcessMap(container, id_ejecucion, currentFilters, sho
             <div id="graph-info-banner" class="alert alert-info" style="margin-top: 1.5rem; margin-bottom: 0;">
                 <!-- Rellenado dinámicamente según el tipo de grafo -->
             </div>
+            
+            ${interpretationHtml}
         </div>
     `;
 

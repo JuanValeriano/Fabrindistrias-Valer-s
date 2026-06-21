@@ -17,6 +17,7 @@ from reportlab.lib import colors
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.section import WD_ORIENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
@@ -69,7 +70,143 @@ def set_cell_margins(cell, top=100, bottom=100, left=150, right=150):
         tcMar.append(node)
     tcPr.append(tcMar)
 
+def generar_interpretaciones_negocio(df_filtrado, meta_horas, ciclo_stats, sla_cumplimiento, lista_variantes, matriz_traspaso, slowest_cases):
+    interpretaciones = {}
+    
+    interpretaciones['mapa_procesos'] = (
+        "El mapa de procesos real (Grafo DFG) revela la secuencia física e histórica de los pedidos. "
+        "Las conexiones más gruesas o con números elevados muestran el camino estándar de la operación. "
+        "Las rutas alternativas reflejan desvíos de calidad y tiempos de espera en tránsito, que incrementan "
+        "directamente los costos del proceso."
+    )
+    
+    col_act = 'Actividad' if 'Actividad' in df_filtrado.columns else 'actividad'
+    if col_act in df_filtrado.columns and not df_filtrado.empty:
+        act_counts = df_filtrado[col_act].value_counts()
+        if len(act_counts) > 0:
+            top_act = act_counts.index[0]
+            top_val = act_counts.values[0]
+            sec_act_txt = ""
+            if len(act_counts) > 1:
+                sec_act_txt = f", seguida de la actividad <b>{act_counts.index[1]}</b> con {act_counts.values[1]} repeticiones"
+            
+            interpretaciones['frecuencia_actividades'] = (
+                f"La actividad con mayor volumen de transacciones es <b>{top_act}</b> con <b>{top_val}</b> repeticiones{sec_act_txt}. "
+                f"Esto indica que el esfuerzo operativo del equipo se concentra principalmente en estas fases iniciales o de control."
+            )
+        else:
+            interpretaciones['frecuencia_actividades'] = "No hay datos suficientes para analizar la frecuencia de actividades."
+    else:
+        interpretaciones['frecuencia_actividades'] = "Columna de actividades no encontrada."
+        
+    col_emp = 'Empleado' if 'Empleado' in df_filtrado.columns else 'empleado'
+    if col_emp in df_filtrado.columns and not df_filtrado.empty:
+        emp_counts = df_filtrado[col_emp].value_counts()
+        if len(emp_counts) > 0:
+            top_emp = emp_counts.index[0]
+            top_val = emp_counts.values[0]
+            sec_emp_txt = ""
+            if len(emp_counts) > 1:
+                sec_emp_txt = f" y <b>{emp_counts.index[1]}</b> con {emp_counts.values[1]} registros"
+            
+            interpretaciones['carga_empleados'] = (
+                f"Se identifica una distribución donde <b>{top_emp}</b> registra el mayor volumen de trabajo con <b>{top_val}</b> eventos, "
+                f"seguido de cerca por{sec_emp_txt}. Se recomienda monitorear este balanceo para evitar sobrecargas de tareas."
+            )
+        else:
+            interpretaciones['carga_empleados'] = "No hay datos suficientes para analizar la carga por operario."
+    else:
+        interpretaciones['carga_empleados'] = "Columna de operarios no encontrada."
+        
+    col_ts = 'Timestamp' if 'Timestamp' in df_filtrado.columns else 'fecha_hora'
+    if col_ts in df_filtrado.columns and not df_filtrado.empty:
+        df_ts = df_filtrado.copy()
+        df_ts[col_ts] = pd.to_datetime(df_ts[col_ts])
+        df_ts['date_str'] = df_ts[col_ts].dt.strftime('%Y-%m-%d')
+        time_counts = df_ts.groupby('date_str').size().sort_index()
+        if not time_counts.empty:
+            peak_date = time_counts.idxmax()
+            peak_val = time_counts.max()
+            avg_val = round(time_counts.mean(), 1)
+            interpretaciones['evolucion_temporal'] = (
+                f"La operación registra un promedio de <b>{avg_val}</b> transacciones por día. "
+                f"El volumen máximo se alcanzó el día <b>{peak_date}</b> con un pico de <b>{peak_val}</b> eventos procesados. "
+                f"Esta variabilidad estacional sugiere la necesidad de una planeación flexible en picos de demanda."
+            )
+        else:
+            interpretaciones['evolucion_temporal'] = "No hay datos suficientes para calcular la evolución temporal."
+    else:
+        interpretaciones['evolucion_temporal'] = "Columna de tiempo no encontrada."
+        
+    if ciclo_stats and 'promedio' in ciclo_stats:
+        retraso_perc = round(100.0 - sla_cumplimiento, 2)
+        interpretaciones['tiempos_ciclo'] = (
+            f"El tiempo de ciclo promedio de procesamiento es de <b>{ciclo_stats.get('promedio', 0):.2f} horas</b>. "
+            f"El nivel de cumplimiento del SLA operativo es del <b>{sla_cumplimiento:.2f}%</b>, lo que indica que "
+            f"el <b>{retraso_perc}%</b> de los lotes superaron el umbral permitido de <b>{meta_horas} horas</b>, "
+            f"con una duración máxima registrada de <b>{ciclo_stats.get('maxima', 0):.2f} horas</b>."
+        )
+    else:
+        interpretaciones['tiempos_ciclo'] = "No hay datos de tiempos para calcular el cumplimiento de SLA."
+        
+    if lista_variantes:
+        num_vars = len(lista_variantes)
+        var1 = lista_variantes[0]
+        var1_id = var1.get('id')
+        var1_cob = var1.get('porcentaje') or var1.get('cobertura') or 0.0
+        interpretaciones['variantes'] = (
+            f"El proceso se ejecuta a través de <b>{num_vars}</b> variantes o secuencias de flujo diferentes. "
+            f"La ruta principal (Variante <b>{var1_id}</b>) representa el <b>{var1_cob}%</b> de los casos. "
+            f"La existencia de otras variantes secundarias revela desvíos o reprocesos que atentan contra la estandarización."
+        )
+    else:
+        interpretaciones['variantes'] = "No hay datos de variantes de flujo disponibles."
+        
+    if matriz_traspaso and matriz_traspaso.get('values') and len(matriz_traspaso.get('values')) > 0:
+        idx = matriz_traspaso.get('index', [])
+        cols = matriz_traspaso.get('columns', [])
+        vals = matriz_traspaso.get('values', [])
+        
+        max_trans = 0
+        from_emp = ""
+        to_emp = ""
+        for i in range(len(idx)):
+            for j in range(len(cols)):
+                if vals[i][j] > max_trans and idx[i] != cols[j]:
+                    max_trans = int(vals[i][j])
+                    from_emp = idx[i]
+                    to_emp = cols[j]
+                    
+        if max_trans > 0:
+            interpretaciones['matriz_traspaso'] = (
+                f"La matriz de interacciones de equipo (SNA) revela que el traspaso de tareas más recurrente "
+                f"ocurre de <b>{from_emp}</b> hacia <b>{to_emp}</b> con <b>{max_trans}</b> entregas directas. "
+                f"Este acoplamiento estrecho denota dependencias específicas entre estos dos operarios."
+            )
+        else:
+            interpretaciones['matriz_traspaso'] = (
+                "La matriz SNA muestra traspasos de trabajo dispersos o autotareas sin un acoplamiento crítico entre operarios."
+            )
+    else:
+        interpretaciones['matriz_traspaso'] = "No hay registros de traspasos interactivos en el equipo."
+        
+    if slowest_cases and len(slowest_cases) > 0:
+        peor_caso = slowest_cases[0]
+        peor_id = peor_caso.get('id_caso')
+        peor_dur = peor_caso.get('duracion')
+        interpretaciones['lotes_criticos'] = (
+            f"Se detalla el historial de lotes críticos. El caso <b>{peor_id}</b> registró la mayor "
+            f"desviación con una duración extrema de <b>{peor_dur}</b>, representando una brecha significativa "
+            f"respecto a la meta de <b>{meta_horas} horas</b>. Requiere auditoría de cuellos de botella específicos."
+        )
+    else:
+        interpretaciones['lotes_criticos'] = "No se detectaron lotes con retraso crítico en el subconjunto de datos."
+        
+    return interpretaciones
+
 def generar_graficos_matplotlib(df_filtrado, id_ejecucion, meta_horas):
+    import uuid
+    uid = uuid.uuid4().hex[:8]
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     if not os.path.exists(static_dir):
         os.makedirs(static_dir)
@@ -79,8 +216,10 @@ def generar_graficos_matplotlib(df_filtrado, id_ejecucion, meta_horas):
     try:
         col_act = 'Actividad' if 'Actividad' in df_filtrado.columns else 'actividad'
         act_counts = df_filtrado[col_act].value_counts()
+        act_counts.index = act_counts.index.astype(str)
+        act_counts = act_counts[act_counts > 0]
         
-        fig, ax = plt.subplots(figsize=(5.5, 2.2))
+        fig, ax = plt.subplots(figsize=(8.0, 3.2))
         act_counts.plot(kind='bar', ax=ax, color='#8b5cf6', width=0.6)
         ax.set_title("Frecuencia de Actividades", fontsize=10, fontweight='bold', color='#1e3a8a')
         ax.tick_params(axis='x', rotation=30, labelsize=7)
@@ -92,7 +231,7 @@ def generar_graficos_matplotlib(df_filtrado, id_ejecucion, meta_horas):
         ax.grid(axis='y', linestyle='--', alpha=0.3)
         plt.tight_layout()
         
-        path_act = os.path.join(static_dir, f"chart_act_{id_ejecucion}.png")
+        path_act = os.path.join(static_dir, f"chart_act_{id_ejecucion}_{uid}.png")
         fig.savefig(path_act, dpi=150)
         plt.close(fig)
         paths['actividades'] = path_act
@@ -102,8 +241,10 @@ def generar_graficos_matplotlib(df_filtrado, id_ejecucion, meta_horas):
     try:
         col_emp = 'Empleado' if 'Empleado' in df_filtrado.columns else 'empleado'
         emp_counts = df_filtrado[col_emp].value_counts()
+        emp_counts.index = emp_counts.index.astype(str)
+        emp_counts = emp_counts[emp_counts > 0].head(10)
         
-        fig, ax = plt.subplots(figsize=(5.5, 2.2))
+        fig, ax = plt.subplots(figsize=(8.0, 3.2))
         emp_counts.plot(kind='bar', ax=ax, color='#ff7f0e', width=0.6)
         ax.set_title("Carga de Trabajo por Empleado", fontsize=10, fontweight='bold', color='#1e3a8a')
         ax.tick_params(axis='x', rotation=30, labelsize=7)
@@ -115,7 +256,7 @@ def generar_graficos_matplotlib(df_filtrado, id_ejecucion, meta_horas):
         ax.grid(axis='y', linestyle='--', alpha=0.3)
         plt.tight_layout()
         
-        path_emp = os.path.join(static_dir, f"chart_emp_{id_ejecucion}.png")
+        path_emp = os.path.join(static_dir, f"chart_emp_{id_ejecucion}_{uid}.png")
         fig.savefig(path_emp, dpi=150)
         plt.close(fig)
         paths['empleados'] = path_emp
@@ -129,11 +270,11 @@ def generar_graficos_matplotlib(df_filtrado, id_ejecucion, meta_horas):
         df_ts['date_str'] = df_ts[col_ts].dt.strftime('%Y-%m-%d')
         time_counts = df_ts.groupby('date_str').size().sort_index()
         
-        fig, ax = plt.subplots(figsize=(8, 1.8))
+        fig, ax = plt.subplots(figsize=(9.5, 3.0))
         time_counts.plot(kind='line', ax=ax, color='#10b981', marker='o', linewidth=2, markersize=4)
         ax.fill_between(time_counts.index, time_counts.values, color='#10b981', alpha=0.1)
         ax.set_title("Volumen de Eventos en el Tiempo", fontsize=10, fontweight='bold', color='#1e3a8a')
-        ax.tick_params(axis='x', rotation=30, labelsize=7)
+        ax.tick_params(axis='x', rotation=45, labelsize=7)
         ax.tick_params(axis='y', labelsize=8)
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
@@ -142,7 +283,7 @@ def generar_graficos_matplotlib(df_filtrado, id_ejecucion, meta_horas):
         ax.grid(axis='y', linestyle='--', alpha=0.3)
         plt.tight_layout()
         
-        path_time = os.path.join(static_dir, f"chart_time_{id_ejecucion}.png")
+        path_time = os.path.join(static_dir, f"chart_time_{id_ejecucion}_{uid}.png")
         fig.savefig(path_time, dpi=150)
         plt.close(fig)
         paths['timeline'] = path_time
@@ -153,7 +294,7 @@ def generar_graficos_matplotlib(df_filtrado, id_ejecucion, meta_horas):
         from BACKEND import miner_api
         case_durations = miner_api.calcular_tiempos_ciclo(df_filtrado)
         if not case_durations.empty:
-            fig, ax = plt.subplots(figsize=(5.5, 2.0))
+            fig, ax = plt.subplots(figsize=(8.0, 3.0))
             ax.hist(case_durations['Duracion_Horas'], bins=10, color='#d62728', edgecolor='white', rwidth=0.8)
             ax.set_title("Distribución de Duraciones (Histograma SLA)", fontsize=10, fontweight='bold', color='#1e3a8a')
             ax.tick_params(axis='x', labelsize=7)
@@ -165,7 +306,7 @@ def generar_graficos_matplotlib(df_filtrado, id_ejecucion, meta_horas):
             ax.grid(axis='y', linestyle='--', alpha=0.3)
             plt.tight_layout()
             
-            path_sla = os.path.join(static_dir, f"chart_sla_{id_ejecucion}.png")
+            path_sla = os.path.join(static_dir, f"chart_sla_{id_ejecucion}_{uid}.png")
             fig.savefig(path_sla, dpi=150)
             plt.close(fig)
             paths['sla_histogram'] = path_sla
@@ -174,7 +315,7 @@ def generar_graficos_matplotlib(df_filtrado, id_ejecucion, meta_horas):
         
     return paths
 
-def generar_reporte_pdf(metadata, kpis, alert, insights_text, ruta_grafo, ciclo_stats, sla_cumplimiento, lista_variantes, matriz_traspaso, slowest_cases, chart_paths):
+def generar_reporte_pdf(metadata, kpis, alert, insights_text, ruta_grafo_frec, ruta_grafo_des, ciclo_stats, sla_cumplimiento, lista_variantes, matriz_traspaso, slowest_cases, chart_paths, interpretaciones=None):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -209,7 +350,7 @@ def generar_reporte_pdf(metadata, kpis, alert, insights_text, ruta_grafo, ciclo_
         fontSize=12,
         leading=15,
         textColor=colors.HexColor('#1e3a8a'),
-        spaceBefore=10,
+        spaceBefore=12,
         spaceAfter=6,
         keepWithNext=True
     )
@@ -331,10 +472,10 @@ def generar_reporte_pdf(metadata, kpis, alert, insights_text, ruta_grafo, ciclo_
         story.append(insights_box)
         story.append(Spacer(1, 8))
         
-    if ruta_grafo and os.path.exists(ruta_grafo):
-        story.append(Paragraph("🗺️ Mapa de Procesos Real (Grafo DFG)", style_h1))
+    if ruta_grafo_frec and os.path.exists(ruta_grafo_frec):
+        story.append(Paragraph("🗺️ Mapa de Procesos - Frecuencia (Grafo DFG)", style_h1))
         try:
-            with PILImage.open(ruta_grafo) as img:
+            with PILImage.open(ruta_grafo_frec) as img:
                 w, h = img.size
             max_w = 460
             ratio = max_w / float(w)
@@ -345,43 +486,64 @@ def generar_reporte_pdf(metadata, kpis, alert, insights_text, ruta_grafo, ciclo_
                 ratio = final_h / float(h)
                 max_w = int(w * ratio)
                 
-            graph_img = Image(ruta_grafo, width=max_w, height=final_h)
+            graph_img = Image(ruta_grafo_frec, width=max_w, height=final_h)
             story.append(graph_img)
+            
+            if interpretaciones and 'mapa_procesos' in interpretaciones:
+                story.append(Spacer(1, 4))
+                story.append(Paragraph(f"<b>Interpretación del Mapa (Frecuencia):</b> {interpretaciones['mapa_procesos']}", style_normal))
         except Exception as e:
-            story.append(Paragraph(f"<i>No se pudo renderizar la imagen del grafo: {e}</i>", style_normal))
+            story.append(Paragraph(f"<i>No se pudo renderizar la imagen del grafo de frecuencia: {e}</i>", style_normal))
+        story.append(Spacer(1, 8))
+
+    if ruta_grafo_des and os.path.exists(ruta_grafo_des):
+        story.append(Paragraph("⏱️ Mapa de Procesos - Desempeño (Grafo DFG)", style_h1))
+        try:
+            with PILImage.open(ruta_grafo_des) as img:
+                w, h = img.size
+            max_w = 460
+            ratio = max_w / float(w)
+            final_h = int(h * ratio)
+            
+            if final_h > 160:
+                final_h = 160
+                ratio = final_h / float(h)
+                max_w = int(w * ratio)
+                
+            graph_img = Image(ruta_grafo_des, width=max_w, height=final_h)
+            story.append(graph_img)
+            
+            story.append(Spacer(1, 4))
+            story.append(Paragraph("<b>Interpretación del Mapa (Desempeño):</b> El grafo de desempeño muestra la duración promedio acumulada entre las transiciones de actividades, lo que facilita la identificación visual de las demoras más críticas en el flujo de trabajo.", style_normal))
+        except Exception as e:
+            story.append(Paragraph(f"<i>No se pudo renderizar la imagen del grafo de desempeño: {e}</i>", style_normal))
         story.append(Spacer(1, 8))
             
-    if 'actividades' in chart_paths or 'empleados' in chart_paths:
-        story.append(Paragraph("📊 Distribución de Carga Operativa", style_h1))
+    if 'actividades' in chart_paths:
+        story.append(Paragraph("📊 Distribución y Carga Operativa - Frecuencia de Actividades", style_h1))
+        act_img = Image(chart_paths['actividades'], width=440, height=176)
+        story.append(act_img)
+        if interpretaciones and 'frecuencia_actividades' in interpretaciones:
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(f"<b>Interpretación:</b> {interpretaciones['frecuencia_actividades']}", style_normal))
+        story.append(Spacer(1, 8))
         
-        act_img = Image(chart_paths['actividades'], width=250, height=100) if 'actividades' in chart_paths else ""
-        emp_img = Image(chart_paths['empleados'], width=250, height=100) if 'empleados' in chart_paths else ""
-        
-        charts_table = Table([[act_img, emp_img]], colWidths=[270, 270])
-        charts_table.setStyle(TableStyle([
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('LEFTPADDING', (0,0), (-1,-1), 0),
-            ('RIGHTPADDING', (0,0), (-1,-1), 0),
-            ('TOPPADDING', (0,0), (-1,-1), 0),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 0),
-        ]))
-        story.append(charts_table)
+    if 'empleados' in chart_paths:
+        story.append(Paragraph("📊 Distribución y Carga Operativa - Carga de Trabajo por Empleado", style_h1))
+        emp_img = Image(chart_paths['empleados'], width=440, height=176)
+        story.append(emp_img)
+        if interpretaciones and 'carga_empleados' in interpretaciones:
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(f"<b>Interpretación:</b> {interpretaciones['carga_empleados']}", style_normal))
         story.append(Spacer(1, 8))
  
     if 'timeline' in chart_paths:
         story.append(Paragraph("📈 Evolución Temporal del Volumen de Trabajo", style_h1))
-        time_img = Image(chart_paths['timeline'], width=480, height=108)
-        time_table = Table([[time_img]], colWidths=[540])
-        time_table.setStyle(TableStyle([
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('LEFTPADDING', (0,0), (-1,-1), 0),
-            ('RIGHTPADDING', (0,0), (-1,-1), 0),
-            ('TOPPADDING', (0,0), (-1,-1), 0),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 0),
-        ]))
-        story.append(time_table)
+        time_img = Image(chart_paths['timeline'], width=460, height=145)
+        story.append(time_img)
+        if interpretaciones and 'evolucion_temporal' in interpretaciones:
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(f"<b>Interpretación:</b> {interpretaciones['evolucion_temporal']}", style_normal))
         story.append(Spacer(1, 8))
         
     story.append(Paragraph("⏱️ Métricas de Tiempo de Ciclo y SLA", style_h1))
@@ -406,17 +568,24 @@ def generar_reporte_pdf(metadata, kpis, alert, insights_text, ruta_grafo, ciclo_
         ('BOTTOMPADDING', (0,0), (-1,-1), 4),
     ]))
     
-    sla_hist_img = Image(chart_paths['sla_histogram'], width=250, height=91) if 'sla_histogram' in chart_paths else ""
-    
-    stats_layout = Table([[stats_table, sla_hist_img]], colWidths=[270, 270])
+    stats_layout = Table([[stats_table]], colWidths=[270])
     stats_layout.setStyle(TableStyle([
-        ('VALIGN', (0,0), (-1,-1), 'TOP'),
-        ('ALIGN', (1,0), (1,-1), 'CENTER'),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
         ('LEFTPADDING', (0,0), (-1,-1), 0),
         ('RIGHTPADDING', (0,0), (-1,-1), 0),
     ]))
     story.append(stats_layout)
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 6))
+    
+    if interpretaciones and 'tiempos_ciclo' in interpretaciones:
+        story.append(Paragraph(f"<b>Interpretación del SLA:</b> {interpretaciones['tiempos_ciclo']}", style_normal))
+        story.append(Spacer(1, 8))
+        
+    if 'sla_histogram' in chart_paths:
+        story.append(Paragraph("📊 Histograma de Distribución de Duraciones", style_h1))
+        sla_hist_img = Image(chart_paths['sla_histogram'], width=440, height=165)
+        story.append(sla_hist_img)
+        story.append(Spacer(1, 8))
 
     if lista_variantes:
         story.append(Paragraph("🔄 Principales Variantes de Flujo Detectadas", style_h1))
@@ -451,6 +620,10 @@ def generar_reporte_pdf(metadata, kpis, alert, insights_text, ruta_grafo, ciclo_
             ('BOTTOMPADDING', (0,0), (-1,-1), 4),
         ]))
         story.append(var_table)
+        
+        if interpretaciones and 'variantes' in interpretaciones:
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(f"<b>Interpretación:</b> {interpretaciones['variantes']}", style_normal))
         story.append(Spacer(1, 8))
 
     if matriz_traspaso and matriz_traspaso.get('values'):
@@ -497,6 +670,10 @@ def generar_reporte_pdf(metadata, kpis, alert, insights_text, ruta_grafo, ciclo_
         story.append(KeepTogether([handover_table]))
         if original_len_cols > 8 or original_len_idx > 8:
             story.append(Paragraph("<font size=7 color='#6b7280'>* Nota: La matriz se ha truncado a las primeras 8 columnas y filas para su visualización en el reporte.</font>", style_normal))
+            
+        if interpretaciones and 'matriz_traspaso' in interpretaciones:
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(f"<b>Interpretación:</b> {interpretaciones['matriz_traspaso']}", style_normal))
         story.append(Spacer(1, 8))
 
     if slowest_cases:
@@ -536,19 +713,67 @@ def generar_reporte_pdf(metadata, kpis, alert, insights_text, ruta_grafo, ciclo_
         ]))
         story.append(KeepTogether([slow_table]))
         
+        if interpretaciones and 'lotes_criticos' in interpretaciones:
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(f"<b>Interpretación:</b> {interpretaciones['lotes_criticos']}", style_normal))
+        
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
 
-def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo_stats, sla_cumplimiento, lista_variantes, matriz_traspaso, slowest_cases, chart_paths):
+def add_interpretation_docx(doc, text):
+    if not text:
+        return
+    p = doc.add_paragraph()
+    p.paragraph_format.left_indent = Inches(0.25)
+    p.paragraph_format.space_before = Pt(4)
+    p.paragraph_format.space_after = Pt(12)
+    
+    parts = text.split("<b>")
+    for i, part in enumerate(parts):
+        if i == 0:
+            run = p.add_run(part)
+            run.font.size = Pt(9.5)
+            run.font.italic = True
+            run.font.color.rgb = RGBColor(0x4B, 0x55, 0x63)
+        else:
+            subparts = part.split("</b>")
+            if len(subparts) > 0:
+                run_bold = p.add_run(subparts[0])
+                run_bold.font.size = Pt(9.5)
+                run_bold.font.bold = True
+                run_bold.font.italic = True
+                run_bold.font.color.rgb = RGBColor(0x1F, 0x29, 0x37)
+            if len(subparts) > 1:
+                run_normal = p.add_run("".join(subparts[1:]))
+                run_normal.font.size = Pt(9.5)
+                run_normal.font.italic = True
+                run_normal.font.color.rgb = RGBColor(0x4B, 0x55, 0x63)
+
+def set_section_landscape(section):
+    section.orientation = WD_ORIENT.LANDSCAPE
+    section.page_width = Inches(11)
+    section.page_height = Inches(8.5)
+    section.top_margin = Inches(0.5)
+    section.bottom_margin = Inches(0.5)
+    section.left_margin = Inches(0.5)
+    section.right_margin = Inches(0.5)
+
+def set_section_portrait(section):
+    section.orientation = WD_ORIENT.PORTRAIT
+    section.page_width = Inches(8.5)
+    section.page_height = Inches(11)
+    section.top_margin = Inches(0.5)
+    section.bottom_margin = Inches(0.5)
+    section.left_margin = Inches(0.5)
+    section.right_margin = Inches(0.5)
+
+def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo_frec, ruta_grafo_des, ciclo_stats, sla_cumplimiento, lista_variantes, matriz_traspaso, slowest_cases, chart_paths, interpretaciones=None):
     doc = Document()
     
     sections = doc.sections
     for section in sections:
-        section.top_margin = Inches(0.5)
-        section.bottom_margin = Inches(0.5)
-        section.left_margin = Inches(0.5)
-        section.right_margin = Inches(0.5)
+        set_section_portrait(section)
         
     style_normal = doc.styles['Normal']
     style_normal.font.name = 'Arial'
@@ -556,9 +781,10 @@ def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo
     style_normal.font.color.rgb = RGBColor(0x1F, 0x29, 0x37)
     
     table_header = doc.add_table(rows=1, cols=1)
-    table_header.autofit = False
+    table_header.allow_autofit = False
     table_header.columns[0].width = Inches(7.5)
     cell = table_header.rows[0].cells[0]
+    cell.width = Inches(7.5)
     set_cell_background(cell, "1E3A8A")
     set_cell_margins(cell, top=140, bottom=140, left=200, right=200)
     
@@ -579,9 +805,12 @@ def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo
     doc.add_paragraph()
     
     table_meta = doc.add_table(rows=2, cols=2)
-    table_meta.autofit = False
+    table_meta.allow_autofit = False
     table_meta.columns[0].width = Inches(3.75)
     table_meta.columns[1].width = Inches(3.75)
+    for row in table_meta.rows:
+        row.cells[0].width = Inches(3.75)
+        row.cells[1].width = Inches(3.75)
     
     f_inc = metadata.get('f_inicio') or "Sin Filtro"
     f_fin = metadata.get('f_fin') or "Sin Filtro"
@@ -608,9 +837,13 @@ def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo
     doc.add_paragraph()
     
     table_kpi = doc.add_table(rows=1, cols=3)
-    table_kpi.autofit = False
+    table_kpi.allow_autofit = False
     for col in table_kpi.columns:
         col.width = Inches(2.5)
+    for row in table_kpi.rows:
+        row.cells[0].width = Inches(2.5)
+        row.cells[1].width = Inches(2.5)
+        row.cells[2].width = Inches(2.5)
         
     costo_fmt = f"S/. {kpis.get('costo_total', 0.0):,.2f}"
     kpis_list = [
@@ -639,9 +872,10 @@ def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo
     doc.add_paragraph()
     
     table_alert = doc.add_table(rows=1, cols=1)
-    table_alert.autofit = False
+    table_alert.allow_autofit = False
     table_alert.columns[0].width = Inches(7.5)
     cell_a = table_alert.rows[0].cells[0]
+    cell_a.width = Inches(7.5)
     
     if alert.get('num_retrasados', 0) > 0:
         set_cell_background(cell_a, "FEF2F2")
@@ -670,9 +904,10 @@ def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo
         run_h.font.color.rgb = RGBColor(0x1E, 0x3A, 0x8A)
         
         table_ins = doc.add_table(rows=1, cols=1)
-        table_ins.autofit = False
+        table_ins.allow_autofit = False
         table_ins.columns[0].width = Inches(7.5)
         cell_ins = table_ins.rows[0].cells[0]
+        cell_ins.width = Inches(7.5)
         set_cell_background(cell_ins, "EFF6FF")
         set_cell_margins(cell_ins, top=120, bottom=120, left=150, right=150)
         
@@ -690,50 +925,81 @@ def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo
                     run_p.font.bold = True
                 run_p.font.size = Pt(9.5)
                 
-    if ruta_grafo and os.path.exists(ruta_grafo):
+    if ruta_grafo_frec and os.path.exists(ruta_grafo_frec):
         h_g = doc.add_paragraph()
-        run_hg = h_g.add_run("🗺️ Mapa de Procesos Real (Grafo DFG)")
+        run_hg = h_g.add_run("🗺️ Mapa de Procesos - Frecuencia (Grafo DFG)")
         run_hg.font.size = Pt(13)
         run_hg.font.bold = True
         run_hg.font.color.rgb = RGBColor(0x1E, 0x3A, 0x8A)
         
         p_desc = doc.add_paragraph()
-        run_desc = p_desc.add_run("Este grafo representa la ruta física e histórica de las actividades realizadas sobre el inventario.")
+        run_desc = p_desc.add_run("Este grafo representa la frecuencia de las rutas físicas e históricas del proceso de inventario.")
         run_desc.font.italic = True
         run_desc.font.size = Pt(9.5)
         
         p_img = doc.add_paragraph()
         p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
         try:
-            p_img.add_run().add_picture(ruta_grafo, width=Inches(3.8))
+            p_img.add_run().add_picture(ruta_grafo_frec, width=Inches(3.8))
         except Exception as e:
-            p_img.add_run(f"No se pudo insertar la imagen del grafo: {e}")
+            p_img.add_run(f"No se pudo insertar la imagen del grafo de frecuencia: {e}")
             
-    if 'actividades' in chart_paths or 'empleados' in chart_paths:
-        h_dist = doc.add_paragraph()
-        run_hdist = h_dist.add_run("📊 Distribución y Carga Operativa")
-        run_hdist.font.size = Pt(13)
-        run_hdist.font.bold = True
-        run_hdist.font.color.rgb = RGBColor(0x1E, 0x3A, 0x8A)
-        
-        table_charts = doc.add_table(rows=1, cols=2)
-        table_charts.autofit = False
-        table_charts.columns[0].width = Inches(3.75)
-        table_charts.columns[1].width = Inches(3.75)
-        
-        if 'actividades' in chart_paths:
-            cell_act = table_charts.rows[0].cells[0]
-            p_act = cell_act.paragraphs[0]
-            p_act.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p_act.add_run().add_picture(chart_paths['actividades'], width=Inches(3.4))
+        if interpretaciones and 'mapa_procesos' in interpretaciones:
+            add_interpretation_docx(doc, interpretaciones['mapa_procesos'])
             
-        if 'empleados' in chart_paths:
-            cell_emp = table_charts.rows[0].cells[1]
-            p_emp = cell_emp.paragraphs[0]
-            p_emp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p_emp.add_run().add_picture(chart_paths['empleados'], width=Inches(3.4))
+    if ruta_grafo_des and os.path.exists(ruta_grafo_des):
+        h_g2 = doc.add_paragraph()
+        run_hg2 = h_g2.add_run("⏱️ Mapa de Procesos - Desempeño (Grafo DFG)")
+        run_hg2.font.size = Pt(13)
+        run_hg2.font.bold = True
+        run_hg2.font.color.rgb = RGBColor(0x1E, 0x3A, 0x8A)
+        
+        p_desc2 = doc.add_paragraph()
+        run_desc2 = p_desc2.add_run("Este grafo muestra la duración promedio en horas de las transiciones entre actividades, resaltando las demoras.")
+        run_desc2.font.italic = True
+        run_desc2.font.size = Pt(9.5)
+        
+        p_img2 = doc.add_paragraph()
+        p_img2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        try:
+            p_img2.add_run().add_picture(ruta_grafo_des, width=Inches(3.8))
+        except Exception as e:
+            p_img2.add_run(f"No se pudo insertar la imagen del grafo de desempeño: {e}")
+            
+        add_interpretation_docx(doc, "El grafo de desempeño muestra la duración promedio acumulada entre las transiciones de actividades, lo que facilita la identificación visual de las demoras más críticas en el flujo de trabajo.")
+            
+    if 'actividades' in chart_paths:
+        h_dist1 = doc.add_paragraph()
+        run_hdist1 = h_dist1.add_run("📊 Distribución Operativa - Frecuencia de Actividades")
+        run_hdist1.font.size = Pt(13)
+        run_hdist1.font.bold = True
+        run_hdist1.font.color.rgb = RGBColor(0x1E, 0x3A, 0x8A)
+        
+        p_act = doc.add_paragraph()
+        p_act.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_act.add_run().add_picture(chart_paths['actividades'], width=Inches(6.0))
+        
+        if interpretaciones and 'frecuencia_actividades' in interpretaciones:
+            add_interpretation_docx(doc, interpretaciones['frecuencia_actividades'])
+            
+    if 'empleados' in chart_paths:
+        h_dist2 = doc.add_paragraph()
+        run_hdist2 = h_dist2.add_run("📊 Distribución Operativa - Carga de Trabajo por Empleado")
+        run_hdist2.font.size = Pt(13)
+        run_hdist2.font.bold = True
+        run_hdist2.font.color.rgb = RGBColor(0x1E, 0x3A, 0x8A)
+        
+        p_emp = doc.add_paragraph()
+        p_emp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_emp.add_run().add_picture(chart_paths['empleados'], width=Inches(6.0))
+        
+        if interpretaciones and 'carga_empleados' in interpretaciones:
+            add_interpretation_docx(doc, interpretaciones['carga_empleados'])
             
     if 'timeline' in chart_paths:
+        sec_timeline = doc.add_section()
+        set_section_landscape(sec_timeline)
+        
         h_t = doc.add_paragraph()
         run_ht = h_t.add_run("📈 Evolución Temporal del Volumen de Trabajo")
         run_ht.font.size = Pt(13)
@@ -742,24 +1008,27 @@ def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo
         
         p_time = doc.add_paragraph()
         p_time.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_time.add_run().add_picture(chart_paths['timeline'], width=Inches(5.5))
+        p_time.add_run().add_picture(chart_paths['timeline'], width=Inches(9.5))
         
+        if interpretaciones and 'evolucion_temporal' in interpretaciones:
+            add_interpretation_docx(doc, interpretaciones['evolucion_temporal'])
+        
+    sec_sla = doc.add_section()
+    set_section_portrait(sec_sla)
+    
     h_s = doc.add_paragraph()
     run_hs = h_s.add_run("⏱️ Métricas de Tiempos de Ciclo y SLA")
     run_hs.font.size = Pt(13)
     run_hs.font.bold = True
     run_hs.font.color.rgb = RGBColor(0x1E, 0x3A, 0x8A)
     
-    table_layout_stats = doc.add_table(rows=1, cols=2)
-    table_layout_stats.autofit = False
-    table_layout_stats.columns[0].width = Inches(3.75)
-    table_layout_stats.columns[1].width = Inches(3.75)
-    
-    cell_stats_tbl = table_layout_stats.rows[0].cells[0]
-    table_stats = cell_stats_tbl.add_table(rows=6, cols=2)
-    table_stats.autofit = False
-    table_stats.columns[0].width = Inches(1.8)
-    table_stats.columns[1].width = Inches(1.6)
+    table_stats = doc.add_table(rows=6, cols=2)
+    table_stats.allow_autofit = False
+    table_stats.columns[0].width = Inches(3.75)
+    table_stats.columns[1].width = Inches(3.75)
+    for row in table_stats.rows:
+        row.cells[0].width = Inches(3.75)
+        row.cells[1].width = Inches(3.75)
     
     headers_stats = ["Métrica", "Valor (Horas)"]
     for j, text_h in enumerate(headers_stats):
@@ -794,13 +1063,24 @@ def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo
         set_cell_background(c0, bg_col)
         set_cell_background(c1, bg_col)
         
-    cell_hist = table_layout_stats.rows[0].cells[1]
+    if interpretaciones and 'tiempos_ciclo' in interpretaciones:
+        add_interpretation_docx(doc, interpretaciones['tiempos_ciclo'])
+        
     if 'sla_histogram' in chart_paths:
-        p_hist = cell_hist.paragraphs[0]
+        h_sh = doc.add_paragraph()
+        run_hsh = h_sh.add_run("📊 Histograma de Distribución de Duraciones")
+        run_hsh.font.size = Pt(11)
+        run_hsh.font.bold = True
+        run_hsh.font.color.rgb = RGBColor(0x1E, 0x3A, 0x8A)
+        
+        p_hist = doc.add_paragraph()
         p_hist.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_hist.add_run().add_picture(chart_paths['sla_histogram'], width=Inches(3.4))
+        p_hist.add_run().add_picture(chart_paths['sla_histogram'], width=Inches(6.0))
         
     if lista_variantes:
+        sec_variants = doc.add_section()
+        set_section_landscape(sec_variants)
+        
         h_v = doc.add_paragraph()
         run_hv = h_v.add_run("🔄 Principales Variantes de Flujo Detectadas")
         run_hv.font.size = Pt(13)
@@ -808,11 +1088,11 @@ def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo
         run_hv.font.color.rgb = RGBColor(0x1E, 0x3A, 0x8A)
         
         table_vars = doc.add_table(rows=1, cols=4)
-        table_vars.autofit = False
+        table_vars.allow_autofit = False
         table_vars.columns[0].width = Inches(1.0)
-        table_vars.columns[1].width = Inches(0.8)
-        table_vars.columns[2].width = Inches(0.8)
-        table_vars.columns[3].width = Inches(4.9)
+        table_vars.columns[1].width = Inches(1.0)
+        table_vars.columns[2].width = Inches(1.0)
+        table_vars.columns[3].width = Inches(7.0)
         
         headers_vars = ["Variante", "Casos", "Cobertura", "Secuencia de Actividades"]
         for j, text_h in enumerate(headers_vars):
@@ -844,6 +1124,15 @@ def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo
                 bg_col = "FFFFFF" if idx_v % 2 == 0 else "F9FAFB"
                 set_cell_background(cell_v, bg_col)
                 
+        for row in table_vars.rows:
+            row.cells[0].width = Inches(1.0)
+            row.cells[1].width = Inches(1.0)
+            row.cells[2].width = Inches(1.0)
+            row.cells[3].width = Inches(7.0)
+            
+        if interpretaciones and 'variantes' in interpretaciones:
+            add_interpretation_docx(doc, interpretaciones['variantes'])
+                
     if matriz_traspaso and matriz_traspaso.get('values'):
         doc.add_paragraph()
         h_h = doc.add_paragraph()
@@ -864,7 +1153,10 @@ def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo
             idx = idx[:8]
             
         table_sna = doc.add_table(rows=1, cols=len(cols) + 1)
-        table_sna.autofit = True
+        table_sna.allow_autofit = False
+        
+        num_cols = len(cols)
+        col_width = Inches(8.4 / num_cols) if num_cols > 0 else Inches(1.0)
         
         cell_corner = table_sna.rows[0].cells[0]
         set_cell_background(cell_corner, "E5E7EB")
@@ -896,12 +1188,20 @@ def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo
                 p_val.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 p_val.add_run(str(int(val)) if val > 0 else "-").font.size = Pt(9)
                 
+        for row in table_sna.rows:
+            row.cells[0].width = Inches(1.6)
+            for j in range(len(cols)):
+                row.cells[j + 1].width = col_width
+                
         if original_len_cols > 8 or original_len_idx > 8:
             p_note = doc.add_paragraph()
             run_note = p_note.add_run("* Nota: La matriz se ha truncado a las primeras 8 columnas y filas para su visualización en el reporte.")
             run_note.font.size = Pt(7.5)
             run_note.font.italic = True
             run_note.font.color.rgb = RGBColor(0x6B, 0x72, 0x80)
+            
+        if interpretaciones and 'matriz_traspaso' in interpretaciones:
+            add_interpretation_docx(doc, interpretaciones['matriz_traspaso'])
                 
     if slowest_cases:
         doc.add_paragraph()
@@ -912,12 +1212,12 @@ def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo
         run_hsc.font.color.rgb = RGBColor(0x1E, 0x3A, 0x8A)
         
         table_sc = doc.add_table(rows=1, cols=5)
-        table_sc.autofit = False
-        table_sc.columns[0].width = Inches(1.3)
-        table_sc.columns[1].width = Inches(1.5)
-        table_sc.columns[2].width = Inches(1.5)
-        table_sc.columns[3].width = Inches(1.0)
-        table_sc.columns[4].width = Inches(2.2)
+        table_sc.allow_autofit = False
+        table_sc.columns[0].width = Inches(1.5)
+        table_sc.columns[1].width = Inches(2.2)
+        table_sc.columns[2].width = Inches(2.2)
+        table_sc.columns[3].width = Inches(1.3)
+        table_sc.columns[4].width = Inches(2.8)
         
         headers_sc = ["ID Lote (Caso)", "Inicio", "Fin", "Duración", "Estado SLA"]
         for j, text_h in enumerate(headers_sc):
@@ -950,7 +1250,19 @@ def generar_reporte_docx(metadata, kpis, alert, insights_text, ruta_grafo, ciclo
                 bg_col = "FFFFFF" if idx_sc % 2 == 0 else "F9FAFB"
                 set_cell_background(cell_v, bg_col)
                 
+        for row in table_sc.rows:
+            row.cells[0].width = Inches(1.5)
+            row.cells[1].width = Inches(2.2)
+            row.cells[2].width = Inches(2.2)
+            row.cells[3].width = Inches(1.3)
+            row.cells[4].width = Inches(2.8)
+            
+        if interpretaciones and 'lotes_criticos' in interpretaciones:
+            add_interpretation_docx(doc, interpretaciones['lotes_criticos'])
+                
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
     return buffer.getvalue()
+
+

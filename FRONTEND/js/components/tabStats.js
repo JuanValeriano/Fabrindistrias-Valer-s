@@ -16,26 +16,41 @@ export function renderTabStats(container, data, showToast) {
             </p>
             
             <div class="charts-grid">
-                <div class="chart-container">
+                <div class="chart-container" style="height: auto;">
                     <div class="chart-title">Frecuencia de Actividades</div>
-                    <div class="chart-wrapper">
+                    <div class="chart-wrapper" style="height: 280px;">
                         <canvas id="chart-activities"></canvas>
                     </div>
+                    ${data && data.interpretaciones && data.interpretaciones.frecuencia_actividades ? `
+                    <div class="business-interpretation" style="margin-top: 1rem; padding: 0.75rem 1rem; background-color: rgba(255,255,255,0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-left: 3px solid var(--primary); border-radius: 6px; font-size: 0.875rem; line-height: 1.5; color: var(--text-main);">
+                        ${data.interpretaciones.frecuencia_actividades}
+                    </div>
+                    ` : ''}
                 </div>
                 
-                <div class="chart-container">
+                <div class="chart-container" style="height: auto;">
                     <div class="chart-title">Carga de Trabajo por Empleado</div>
-                    <div class="chart-wrapper">
+                    <div class="chart-wrapper" style="height: 280px;">
                         <canvas id="chart-employees"></canvas>
                     </div>
+                    ${data && data.interpretaciones && data.interpretaciones.carga_empleados ? `
+                    <div class="business-interpretation" style="margin-top: 1rem; padding: 0.75rem 1rem; background-color: rgba(255,255,255,0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-left: 3px solid #ff7f0e; border-radius: 6px; font-size: 0.875rem; line-height: 1.5; color: var(--text-main);">
+                        ${data.interpretaciones.carga_empleados}
+                    </div>
+                    ` : ''}
                 </div>
             </div>
             
-            <div class="chart-container" style="height: 380px; margin-top: 1.5rem;">
+            <div class="chart-container" style="height: auto; margin-top: 1.5rem;">
                 <div class="chart-title">📈 Volumen de Eventos en el Tiempo</div>
-                <div class="chart-wrapper">
+                <div class="chart-wrapper" style="height: 280px;">
                     <canvas id="chart-timeline"></canvas>
                 </div>
+                ${data && data.interpretaciones && data.interpretaciones.evolucion_temporal ? `
+                <div class="business-interpretation" style="margin-top: 1rem; padding: 0.75rem 1rem; background-color: rgba(255,255,255,0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-left: 3px solid var(--success); border-radius: 6px; font-size: 0.875rem; line-height: 1.5; color: var(--text-main);">
+                    ${data.interpretaciones.evolucion_temporal}
+                </div>
+                ` : ''}
             </div>
         </div>
         

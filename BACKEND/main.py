@@ -328,11 +328,15 @@ def query_analysis(id_ejecucion: str, filters: FilterRequest):
 
     act_counts_dict = {}
     if 'actividad' in df_vista.columns:
-        act_counts_dict = df_vista['actividad'].value_counts().to_dict()
+        s_act = df_vista['actividad'].value_counts()
+        s_act.index = s_act.index.astype(str)
+        act_counts_dict = s_act[s_act > 0].to_dict()
         
     emp_counts_dict = {}
     if 'empleado' in df_vista.columns:
-        emp_counts_dict = df_vista['empleado'].value_counts().to_dict()
+        s_emp = df_vista['empleado'].value_counts()
+        s_emp.index = s_emp.index.astype(str)
+        emp_counts_dict = s_emp[s_emp > 0].head(10).to_dict()
         
     picos_trabajo_str = ""
     if col_tiempo in df_vista.columns:
@@ -346,6 +350,16 @@ def query_analysis(id_ejecucion: str, filters: FilterRequest):
             dia_pico = df_tiempos_group.idxmax().strftime("%Y-%m-%d")
             max_eventos = df_tiempos_group.max()
             picos_trabajo_str = f"- Período analizado: {df_fechas['Solo_Fecha'].min().strftime('%Y-%m-%d')} a {df_fechas['Solo_Fecha'].max().strftime('%Y-%m-%d')} ({total_dias} días)\n- Promedio de eventos por día: {avg_eventos}\n- Día con mayor volumen de trabajo: {dia_pico} ({max_eventos} eventos)"
+
+    interpretaciones = report_generator.generar_interpretaciones_negocio(
+        df_filtrado=df_filtrado,
+        meta_horas=meta_horas,
+        ciclo_stats=ciclo_stats,
+        sla_cumplimiento=sla_cumplimiento,
+        lista_variantes=lista_vars_filtradas,
+        matriz_traspaso=matriz_traspaso,
+        slowest_cases=slowest_cases
+    )
 
     return {
         "empty": False,
@@ -376,7 +390,8 @@ def query_analysis(id_ejecucion: str, filters: FilterRequest):
         "contexto_negocio": contexto_negocio,
         "act_counts": act_counts_dict,
         "emp_counts": emp_counts_dict,
-        "picos_trabajo": picos_trabajo_str
+        "picos_trabajo": picos_trabajo_str,
+        "interpretaciones": interpretaciones
     }
 
 @app.get("/api/analysis/graph/{id_ejecucion}")
@@ -641,21 +656,32 @@ def export_analysis(id_ejecucion: str, req: ExportRequest):
     chart_paths = {}
     try:
         chart_paths = report_generator.generar_graficos_matplotlib(df_filtrado, id_ejecucion, meta_horas)
-        ruta_grafo = miner_api.descubrir_proceso(df_filtrado, "frecuencia", id_ejecucion)
+        ruta_grafo_frec = miner_api.descubrir_proceso(df_filtrado, "frecuencia", id_ejecucion)
+        ruta_grafo_des = miner_api.descubrir_proceso(df_filtrado, "desempeño", id_ejecucion)
+        
+        interpretaciones = report_generator.generar_interpretaciones_negocio(
+            df_filtrado=df_filtrado,
+            meta_horas=meta_horas,
+            ciclo_stats=ciclo_stats,
+            sla_cumplimiento=sla_cumplimiento,
+            lista_variantes=lista_variantes,
+            matriz_traspaso=matriz_traspaso,
+            slowest_cases=slowest_cases
+        )
         
         if req.format == "docx":
             file_bytes = report_generator.generar_reporte_docx(
-                metadata, kpis, alert, req.insights, ruta_grafo,
+                metadata, kpis, alert, req.insights, ruta_grafo_frec, ruta_grafo_des,
                 ciclo_stats, sla_cumplimiento, lista_variantes, matriz_traspaso, slowest_cases,
-                chart_paths
+                chart_paths, interpretaciones
             )
             media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             filename = f"Reporte_{id_ejecucion}.docx"
         else:
             file_bytes = report_generator.generar_reporte_pdf(
-                metadata, kpis, alert, req.insights, ruta_grafo,
+                metadata, kpis, alert, req.insights, ruta_grafo_frec, ruta_grafo_des,
                 ciclo_stats, sla_cumplimiento, lista_variantes, matriz_traspaso, slowest_cases,
-                chart_paths
+                chart_paths, interpretaciones
             )
             media_type = "application/pdf"
             filename = f"Reporte_{id_ejecucion}.pdf"

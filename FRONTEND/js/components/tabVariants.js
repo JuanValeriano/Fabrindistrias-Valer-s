@@ -41,12 +41,21 @@ export function renderTabVariants(container, data) {
                 </table>
             </div>
             
-            <div class="chart-container" style="height: 350px;">
+            <div class="chart-container" style="height: 350px; margin-bottom: 1.5rem;">
                 <div class="chart-title">📊 Cobertura por Variante</div>
                 <div class="chart-wrapper">
                     <canvas id="chart-variants-coverage"></canvas>
                 </div>
             </div>
+            
+            ${data && data.interpretaciones && data.interpretaciones.variantes ? `
+            <div class="business-interpretation" style="padding: 1.25rem; background-color: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-left: 4px solid var(--primary); border-radius: 8px;">
+                <h4 style="margin-top: 0; color: var(--primary-hover); display: flex; align-items: center; gap: 0.5rem; font-size: 1rem; font-weight: 600; margin-bottom: 0.5rem;">
+                    💡 Interpretación de Variantes
+                </h4>
+                <p style="margin-bottom: 0; font-size: 0.95rem; line-height: 1.6; color: var(--text-main);">${data.interpretaciones.variantes}</p>
+            </div>
+            ` : ''}
         </div>
     `;
 

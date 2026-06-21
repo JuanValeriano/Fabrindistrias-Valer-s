@@ -45,9 +45,9 @@ export function renderTabSLA(container, data) {
             <div class="divider"></div>
             
             <div class="admin-columns">
-                <div class="admin-col" style="flex: 1 1 300px;">
+                <div class="admin-col" style="flex: 1 1 300px; display: flex; flex-direction: column;">
                     <h3>Cumplimiento de SLA Operativo</h3>
-                    <div class="card kpi-card" style="margin-top: 1rem; background-color: rgba(255,255,255,0.02); height: 100%;">
+                    <div class="card kpi-card" style="margin-top: 1rem; background-color: rgba(255,255,255,0.02); flex-grow: 1;">
                         <span class="kpi-label">Tasa de Cumplimiento (%)</span>
                         <span class="kpi-value" style="color: ${data.sla_cumplimiento === 100 ? 'var(--success)' : 'var(--accent)'};">
                             ${data.sla_cumplimiento}%
@@ -65,6 +65,15 @@ export function renderTabSLA(container, data) {
                     </div>
                 </div>
             </div>
+            
+            ${data && data.interpretaciones && data.interpretaciones.tiempos_ciclo ? `
+            <div class="business-interpretation" style="margin-top: 1.5rem; padding: 1.25rem; background-color: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-left: 4px solid var(--accent); border-radius: 8px;">
+                <h4 style="margin-top: 0; color: var(--accent); display: flex; align-items: center; gap: 0.5rem; font-size: 1rem; font-weight: 600; margin-bottom: 0.5rem;">
+                    💡 Interpretación del SLA y Tiempos de Ciclo
+                </h4>
+                <p style="margin-bottom: 0; font-size: 0.95rem; line-height: 1.6; color: var(--text-main);">${data.interpretaciones.tiempos_ciclo}</p>
+            </div>
+            ` : ''}
             
             <div class="divider"></div>
             
@@ -101,6 +110,15 @@ export function renderTabSLA(container, data) {
                     </tbody>
                 </table>
             </div>
+            
+            ${data && data.interpretaciones && data.interpretaciones.lotes_criticos ? `
+            <div class="business-interpretation" style="margin-top: 1.5rem; padding: 1.25rem; background-color: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-left: 4px solid var(--error); border-radius: 8px;">
+                <h4 style="margin-top: 0; color: #ef4444; display: flex; align-items: center; gap: 0.5rem; font-size: 1rem; font-weight: 600; margin-bottom: 0.5rem;">
+                    💡 Interpretación de Lotes Críticos
+                </h4>
+                <p style="margin-bottom: 0; font-size: 0.95rem; line-height: 1.6; color: var(--text-main);">${data.interpretaciones.lotes_criticos}</p>
+            </div>
+            ` : ''}
         </div>
     `;
 

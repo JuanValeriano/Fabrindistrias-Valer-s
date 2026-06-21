@@ -74,6 +74,15 @@ export function renderTabHandover(container, data) {
                 <h4>💡 Cómo interpretar esta matriz</h4>
                 <p>Los números representan traspasos de tareas entre personas en casos idénticos. Celdas con números altos (fondos púrpuras más intensos) denotan dependencias directas o cargas concentradas. Celdas vacías indican que no hay interacción directa en las secuencias observadas.</p>
             </div>
+            
+            ${data && data.interpretaciones && data.interpretaciones.matriz_traspaso ? `
+            <div class="business-interpretation" style="margin-top: 1.5rem; padding: 1.25rem; background-color: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-left: 4px solid var(--primary); border-radius: 8px;">
+                <h4 style="margin-top: 0; color: var(--primary-hover); display: flex; align-items: center; gap: 0.5rem; font-size: 1rem; font-weight: 600; margin-bottom: 0.5rem;">
+                    💡 Interpretación del Traspaso de Tareas
+                </h4>
+                <p style="margin-bottom: 0; font-size: 0.95rem; line-height: 1.6; color: var(--text-main);">${data.interpretaciones.matriz_traspaso}</p>
+            </div>
+            ` : ''}
         </div>
     `;
 }
